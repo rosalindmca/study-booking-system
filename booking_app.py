@@ -206,13 +206,6 @@ class StudyBookingSystem:
         # Save to file
         self._save_bookings()
         
-        # Send confirmation emails
-        self._send_confirmation_email(name, participant_id, email, group, 
-                                     baseline_date, baseline_time, 
-                                     pre_dosing_date, pre_dosing_time, 
-                                     dosing_date, 
-                                     follow_up_date, follow_up_time)
-        
         return True, "Booking successful"
     
     def cancel_booking(self, participant_id, reason):
@@ -355,119 +348,6 @@ class StudyBookingSystem:
         
         return True
     
-    def _send_confirmation_email(self, name, participant_id, email, group, 
-                                baseline_date, baseline_time, 
-                                pre_dosing_date, pre_dosing_time, 
-                                dosing_date, 
-                                follow_up_date, follow_up_time):
-        """Send confirmation email to participant and research team"""
-        try:
-            # Format dates for email
-            baseline_formatted = baseline_date.strftime('%A, %B %d, %Y')
-            pre_dosing_formatted = pre_dosing_date.strftime('%A, %B %d, %Y')
-            dosing_formatted = dosing_date.strftime('%A, %B %d, %Y')
-            follow_up_formatted = follow_up_date.strftime('%A, %B %d, %Y')
-            
-            # Create email content
-            email_subject = f"Study Visit Booking Confirmation - Participant {participant_id}"
-            
-            email_body = f"""
-            <html>
-            <body>
-            <h2>Study Visit Booking Confirmation</h2>
-            
-            <p>Dear {name},</p>
-            
-            <p>Thank you for booking your study visits. Your appointments have been scheduled as follows:</p>
-            
-            <table border="1" cellpadding="5" cellspacing="0">
-                <tr>
-                    <th>Visit</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                </tr>
-                <tr>
-                    <td>Visit 1 (Baseline)</td>
-                    <td>{baseline_formatted}</td>
-                    <td>{baseline_time}</td>
-                </tr>
-                <tr>
-                    <td>Visit 2 (Pre-dosing)</td>
-                    <td>{pre_dosing_formatted}</td>
-                    <td>{pre_dosing_time}</td>
-                </tr>
-                <tr>
-                    <td>Visit 3 (Dosing)</td>
-                    <td>{dosing_formatted}</td>
-                    <td>All Day</td>
-                </tr>
-                <tr>
-                    <td>Visit 4 (Follow-up)</td>
-                    <td>{follow_up_formatted}</td>
-                    <td>{follow_up_time}</td>
-                </tr>
-            </table>
-            
-            <p>Important Information:</p>
-            <ul>
-                <li>Please arrive 15 minutes before your scheduled appointment time</li>
-                <li>Bring a valid ID and your appointment confirmation</li>
-                <li>If you need to reschedule, please contact us at least 48 hours in advance</li>
-                <li>For any questions, email us at dipp-project@ucl.ac.uk</li>
-            </ul>
-            
-            <p>Your Participant ID: <strong>{participant_id}</strong></p>
-            <p>You are in the <strong>{group}</strong> group.</p>
-            
-            <p>Thank you for your participation!</p>
-            <p>The Research Team</p>
-            </body>
-            </html>
-            """
-            
-            # In a production app, you would use your email server credentials here
-            # For demo purposes, we'll just show what would be emailed
-            st.session_state['email_sent'] = {
-                'to_participant': email,
-                'to_team': 'dipp-project@ucl.ac.uk',
-                'subject': email_subject,
-                'body': email_body
-            }
-            
-            # Note: In the real deployment, use this code to actually send emails
-            # Connect to email server and send emails
-            """
-            # Create message for participant
-            msg_participant = MIMEMultipart()
-            msg_participant['From'] = 'your-email@ucl.ac.uk'
-            msg_participant['To'] = email
-            msg_participant['Subject'] = email_subject
-            msg_participant.attach(MIMEText(email_body, 'html'))
-            
-            # Create message for research team
-            msg_team = MIMEMultipart()
-            msg_team['From'] = 'your-email@ucl.ac.uk'
-            msg_team['To'] = 'dipp-project@ucl.ac.uk'
-            msg_team['Subject'] = f"[ADMIN] {email_subject}"
-            msg_team.attach(MIMEText(email_body + f"\n\nParticipant Email: {email}", 'html'))
-            
-            # Connect to SMTP server
-            server = smtplib.SMTP('smtp.ucl.ac.uk', 587)
-            server.starttls()
-            server.login('your-email@ucl.ac.uk', 'your-password')
-            
-            # Send emails
-            server.send_message(msg_participant)
-            server.send_message(msg_team)
-            
-            server.quit()
-            """
-            
-            return True
-        except Exception as e:
-            print(f"Error sending email: {e}")
-            return False
-        
     def get_all_bookings(self):
         """Return all bookings"""
         return self.bookings
@@ -484,9 +364,6 @@ def get_booking_system():
 
 booking_system = get_booking_system()
 
-# Initialize session state for confirmation
-if 'email_sent' not in st.session_state:
-    st.session_state['email_sent'] = None
 
 # App title
 st.title("Study Visit Booking System")
@@ -688,8 +565,10 @@ with tab1:
                         )
                         
                         # Add email confirmation message
+                        # Add confirmation instructions
                         st.markdown("---")
-                        st.success("A confirmation email has been sent to your email address and the research team.")
+                        st.warning("⚠️ IMPORTANT: Please take a screenshot or print this page for your records.")
+                        st.info("A member of the DIPP team will contact you shortly at your provided email address to confirm these appointments.")
                         
                         # Offer calendar download
                         st.download_button(
@@ -701,10 +580,6 @@ with tab1:
                         
                         st.markdown("Please take a screenshot or print this page for your records.")
                         
-                        # Show email preview
-                        with st.expander("Email Preview"):
-                            if st.session_state['email_sent']:
-                                st.markdown(st.session_state['email_sent']['body'], unsafe_allow_html=True)
                     else:
                         st.error(f"❌ Booking Failed: {message}")
     else:
