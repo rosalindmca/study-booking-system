@@ -589,7 +589,7 @@ with tab2:
     st.header("Admin Panel")
     
     # Password protection for admin
-    admin_password = st.text_input("Admin Password (enter 'admin' for demo)", type="password")
+    admin_password = st.text_input("Admin Password", type="password")
     
     if admin_password == "admin":
         admin_tabs = st.tabs(["View Bookings", "Cancel Booking", "System Management"])
