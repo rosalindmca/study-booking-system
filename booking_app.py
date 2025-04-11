@@ -46,9 +46,24 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=required_columns)
     
     def get_dosing_dates(self, group):
-        """Generate all possible dosing dates between May-October 2025"""
-        start_date = datetime(2025, 5, 1).date()
-        end_date = datetime(2025, 10, 31).date()  # Extended to October 31st
+        """Generate all possible dosing dates based on configured date range"""
+        # Load date range from settings file
+        settings_file = "booking_settings.json"
+        
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                    start_date = datetime.strptime(settings["start_date"], "%Y-%m-%d").date()
+                    end_date = datetime.strptime(settings["end_date"], "%Y-%m-%d").date()
+            except:
+                # Fallback to default range if settings file is invalid
+                start_date = datetime(2025, 5, 1).date()
+                end_date = datetime(2025, 10, 31).date()
+        else:
+            # Use default range if settings file doesn't exist
+            start_date = datetime(2025, 5, 1).date()
+            end_date = datetime(2025, 10, 31).date()
         
         dates = []
         current = start_date
@@ -670,8 +685,68 @@ with tab2:
             
             # Date range management
             st.markdown("#### Manage Date Range")
-            st.info("In the production version, you can add controls here to adjust the available date range.")
-            
+            st.info("Set the date range for available bookings. This affects which dates are shown to participants.")
+
+            # Get current date range settings (or default to May-Oct 2025)
+            current_settings = {}
+            settings_file = "booking_settings.json"
+
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, 'r') as f:
+                        current_settings = json.load(f)
+                except:
+                    current_settings = {
+                        "start_date": "2025-05-01",
+                        "end_date": "2025-10-31"
+                    }
+            else:
+                current_settings = {
+                    "start_date": "2025-05-01",
+                    "end_date": "2025-10-31"
+                }
+
+            # Create date inputs for start and end dates
+            col1, col2 = st.columns(2)
+            with col1:
+                # Convert string dates to datetime objects for the date_input
+                default_start = datetime.strptime(current_settings["start_date"], "%Y-%m-%d").date()
+                new_start_date = st.date_input(
+                    "Start Date", 
+                    value=default_start,
+                    min_value=datetime(2025, 1, 1).date(),
+                    max_value=datetime(2026, 12, 31).date()
+                )
+                
+            with col2:
+                default_end = datetime.strptime(current_settings["end_date"], "%Y-%m-%d").date()
+                new_end_date = st.date_input(
+                    "End Date", 
+                    value=default_end,
+                    min_value=datetime(2025, 1, 1).date(),
+                    max_value=datetime(2026, 12, 31).date()
+                )
+
+            # Validate input
+            if new_start_date >= new_end_date:
+                st.error("Start date must be before end date")
+                can_save = False
+            else:
+                can_save = True
+
+            # Save settings button
+            if st.button("Save Date Range Settings", disabled=not can_save):
+                # Update settings
+                current_settings["start_date"] = new_start_date.strftime("%Y-%m-%d")
+                current_settings["end_date"] = new_end_date.strftime("%Y-%m-%d")
+                
+                # Save to file
+                with open(settings_file, 'w') as f:
+                    json.dump(current_settings, f)
+                
+                st.success(f"✅ Date range updated: {new_start_date.strftime('%B %d, %Y')} to {new_end_date.strftime('%B %d, %Y')}")
+                st.info("This will affect which dates are shown for new bookings.")
+
             # Email settings
             st.markdown("#### Email Settings")
             st.info("In the production version, you can add controls here to configure email settings.")
