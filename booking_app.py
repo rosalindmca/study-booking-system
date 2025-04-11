@@ -317,7 +317,7 @@ st.title("Participant Booking System (DIPP Study)")
 
 # Study information
 st.markdown("""
-**About the DIPP Study Visits**
+**About the DIPP study visits**
 
 The DIPP study requires participants to attend four separate visits:
 
