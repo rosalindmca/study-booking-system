@@ -6,11 +6,10 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from ics import Calendar, Event
 import pytz
 
 # Set page config
-st.set_page_config(page_title="Study Visit Booking System", layout="wide")
+st.set_page_config(page_title="DIPP Study Visit Booking System", layout="wide")
 
 # Create a class to handle the booking logic
 class StudyBookingSystem:
@@ -47,9 +46,9 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=required_columns)
     
     def get_dosing_dates(self, group):
-        """Generate all possible dosing dates between May-June 2025"""
+        """Generate all possible dosing dates between May-October 2025"""
         start_date = datetime(2025, 5, 1).date()
-        end_date = datetime(2025, 6, 30).date()
+        end_date = datetime(2025, 10, 31).date()  # Extended to October 31st
         
         dates = []
         current = start_date
@@ -122,7 +121,7 @@ class StudyBookingSystem:
         ]
         
         # Get already booked times for this date
-        booked_times = active_bookings['pre_dosing_time'].tolist()
+        booked_times = active_bookings['pre_dosing_time'].tolist() if 'pre_dosing_time' in active_bookings.columns else []
         
         # Return available times
         all_times = ["Daytime", "Evening"]
@@ -142,7 +141,7 @@ class StudyBookingSystem:
         ]
         
         # Get already booked times for this date
-        booked_times = active_bookings['follow_up_time'].tolist()
+        booked_times = active_bookings['follow_up_time'].tolist() if 'follow_up_time' in active_bookings.columns else []
         
         # Return available times
         all_times = ["Daytime", "Evening"]
@@ -163,7 +162,7 @@ class StudyBookingSystem:
             (self.bookings['booking_status'] == 'Active') & 
             (self.bookings['baseline_date'] == baseline_date.strftime('%Y-%m-%d')) &
             (self.bookings['baseline_time'] == target_time)
-        ]
+        ] if 'baseline_time' in self.bookings.columns else pd.DataFrame()
         
         # If there are no bookings for this slot, it's available
         return len(active_bookings) == 0
@@ -249,74 +248,6 @@ class StudyBookingSystem:
         
         return True, f"All bookings reset. Backup created: {backup_file}"
     
-    def generate_calendar_file(self, name, participant_id, group, 
-                           baseline_date, baseline_time, 
-                           pre_dosing_date, pre_dosing_time, 
-                           dosing_date, 
-                           follow_up_date, follow_up_time):
-        """Generate an iCalendar file with all appointments"""
-        cal = Calendar()
-        
-        # Helper function to create datetime objects with appropriate times
-        def get_start_end_times(date, time_slot):
-            date_str = date.strftime('%Y-%m-%d')
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-            
-            if time_slot == "Daytime":
-                start_time = date_obj.replace(hour=9, minute=0)
-                end_time = date_obj.replace(hour=12, minute=0)
-            elif time_slot == "Evening":
-                start_time = date_obj.replace(hour=14, minute=0)
-                end_time = date_obj.replace(hour=17, minute=0)
-            elif time_slot == "All Day":
-                start_time = date_obj.replace(hour=9, minute=0)
-                end_time = date_obj.replace(hour=17, minute=0)
-            
-            return start_time, end_time
-        
-        # Visit 1: Baseline
-        baseline_start, baseline_end = get_start_end_times(baseline_date, baseline_time)
-        baseline_event = Event()
-        baseline_event.name = "Study Visit 1: Baseline"
-        baseline_event.begin = baseline_start
-        baseline_event.end = baseline_end
-        baseline_event.description = f"Baseline visit for study participant {participant_id}. Includes surveys and computer tasks (about 3 hours)."
-        baseline_event.location = "Research Center"
-        cal.events.add(baseline_event)
-        
-        # Visit 2: Pre-dosing
-        pre_dosing_start, pre_dosing_end = get_start_end_times(pre_dosing_date, pre_dosing_time)
-        pre_dosing_event = Event()
-        pre_dosing_event.name = "Study Visit 2: Pre-dosing Scans"
-        pre_dosing_event.begin = pre_dosing_start
-        pre_dosing_event.end = pre_dosing_end
-        pre_dosing_event.description = f"Pre-dosing visit for study participant {participant_id}. Includes surveys, computer tasks, and fMRI movie scan (about 5 hours)."
-        pre_dosing_event.location = "Research Center"
-        cal.events.add(pre_dosing_event)
-        
-        # Visit 3: Dosing
-        dosing_start, dosing_end = get_start_end_times(dosing_date, "All Day")
-        dosing_event = Event()
-        dosing_event.name = "Study Visit 3: Dosing Day"
-        dosing_event.begin = dosing_start
-        dosing_event.end = dosing_end
-        dosing_event.description = f"Dosing day for study participant {participant_id}. Full day visit."
-        dosing_event.location = "Research Center"
-        cal.events.add(dosing_event)
-        
-        # Visit 4: Follow-up
-        follow_up_start, follow_up_end = get_start_end_times(follow_up_date, follow_up_time)
-        follow_up_event = Event()
-        follow_up_event.name = "Study Visit 4: Follow-up Scans"
-        follow_up_event.begin = follow_up_start
-        follow_up_event.end = follow_up_end
-        follow_up_event.description = f"Follow-up visit for study participant {participant_id}. Includes surveys, computer tasks, and fMRI movie scan (about 5 hours)."
-        follow_up_event.location = "Research Center"
-        cal.events.add(follow_up_event)
-        
-        # Return calendar as string
-        return cal.serialize()
-    
     def _validate_booking(self, baseline, pre_dosing, dosing, follow_up, group):
         """Validate the booking dates"""
         # Ensure dosing is on correct day of week
@@ -366,35 +297,50 @@ booking_system = get_booking_system()
 
 
 # App title
-st.title("Study Visit Booking System")
+st.title("Participant Booking System (DIPP Study)")
+
 
 # Study information
 st.markdown("""
-## About the Study Visits
+**About the DIPP Study Visits**
 
-This study requires participants to attend four separate visits:
+The DIPP study requires participants to attend four separate visits:
 
-1. **Dosing Day (Visit 3)**: This is the main visit where you'll spend all day at the center. You can choose either a Wednesday or Saturday.
+1. **Baseline Visit (Visit 1)**: About 3 weeks before your dosing day, you'll come in for your first baseline visit to do surveys and computer tasks (about 3 hours).
+   **Location: 26 Bedford Way, London**
 
-2. **Pre-dosing Visit (Visit 2)**: The day before your dosing, you'll need to come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
+2. **Pre-dosing Visit (Visit 2)**: One day before your dosing, you'll need to come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
+   **Location: 26 Bedford Way, London**
 
-3. **Baseline Visit (Visit 1)**: About 3 weeks before your dosing day, you'll come in for your first baseline visit to do surveys and computer tasks (about 3 hours).
+3. **Dosing Day (Visit 3)**: This is the main visit where you'll spend all day at the center. You can choose either a Wednesday or Saturday.
+   **Location: 1-19 Torrington Place, London**
 
 4. **Follow-up Visit (Visit 4)**: About 2 weeks after your dosing day, you'll come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
+   **Location: 26 Bedford Way, London**
 
+**Important**: Between Visit 1 and Visit 2, you'll complete the 21-day preparation programme using our web app. This includes daily morning practices, weekly activities, and submitting a brief voice note twice a day (we'll guide you through the whole process).
+
+**Note about time slots**:
+* **Daytime**: Generally between 9:00 AM - 5:00 PM
+* **Evening**: Generally between 5:00 PM - 10:00 PM
+
+The research team will contact you to arrange specific times within these blocks. You can use the booking system below to book your slot. Once you have booked a slot, it will no longer be available for other people to book. If you cannot attend any of the available slots, please contact the DIPP Research Team directly (dipp-project@ucl.ac.uk).
+
+---
+            
 ## Our Scheduling System
 
 We have two scheduling groups:
 
 ### Wednesday Dosing Group:
 - **Dosing Day**: Wednesday (all day)
-- **Pre-dosing Visit**: Tuesday (day before), choose daytime or evening
+- **Pre-dosing Visit**: Tuesday (1 day before), choose daytime or evening
 - **Baseline Visit**: Monday (at least 22 days before dosing), daytime only
 - **Follow-up Visit**: Thursday (about 2 weeks after dosing), choose daytime or evening
 
 ### Saturday Dosing Group:
 - **Dosing Day**: Saturday (all day)
-- **Pre-dosing Visit**: Friday (day before), choose daytime or evening
+- **Pre-dosing Visit**: Friday (1 day before), choose daytime or evening
 - **Baseline Visit**: Monday (at least 22 days before dosing), evening only
 - **Follow-up Visit**: Sunday (about 2 weeks after dosing), choose daytime or evening
 
@@ -453,19 +399,21 @@ with tab1:
                 
                 # Visit 1: Baseline
                 st.markdown("#### Visit 1: Baseline")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown(f"**Date**: {baseline_date.strftime('%A, %B %d, %Y')}")
                 with col2:
                     baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
                     st.markdown(f"**Time**: {baseline_time}")
+                with col3:
+                    st.markdown("**Location**: 26 Bedford Way")
                 
                 if not baseline_available:
                     st.warning(f"⚠️ This baseline slot is already booked. Please select a different dosing date.")
                 
                 # Visit 2: Pre-dosing
                 st.markdown("#### Visit 2: Pre-dosing")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown(f"**Date**: {pre_dosing_date.strftime('%A, %B %d, %Y')}")
                 with col2:
@@ -476,20 +424,25 @@ with tab1:
                     else:
                         pre_dosing_time = st.radio(
                             "Select Time for Pre-dosing Visit", 
-                            options=available_pre_dosing_times
+                            options=available_pre_dosing_times,
+                            key="pre_dosing_time"
                         )
+                with col3:
+                    st.markdown("**Location**: 26 Bedford Way")
                 
                 # Visit 3: Dosing Day
                 st.markdown("#### Visit 3: Dosing Day")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown(f"**Date**: {dosing_date.strftime('%A, %B %d, %Y')}")
                 with col2:
                     st.markdown("**Time**: All Day")
+                with col3:
+                    st.markdown("**Location**: 1-19 Torrington Place")
                 
                 # Visit 4: Follow-up
                 st.markdown("#### Visit 4: Follow-up")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown(f"**Date**: {follow_up_date.strftime('%A, %B %d, %Y')}")
                 with col2:
@@ -500,11 +453,17 @@ with tab1:
                     else:
                         follow_up_time = st.radio(
                             "Select Time for Follow-up Visit", 
-                            options=available_follow_up_times
+                            options=available_follow_up_times,
+                            key="follow_up_time"
                         )
+                with col3:
+                    st.markdown("**Location**: 26 Bedford Way")
                 
                 # Step 5: Submit booking
                 st.subheader("Step 5: Confirm Booking")
+                
+                # Remind about the 21-day preparation period
+                st.info("**Remember**: Between Visit 1 (Baseline) and Visit 2 (Pre-dosing), you'll begin your 21-day preparation period. This includes daily morning practices and submitting voice notes twice a day.")
                 
                 # Determine if we can proceed with booking
                 can_book = (
@@ -534,7 +493,7 @@ with tab1:
                         st.subheader("Your Visit Schedule:")
                         
                         # Create a nice table for the schedule
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.markdown("**Visit**")
                             st.markdown("Visit 1 (Baseline)")
@@ -554,31 +513,53 @@ with tab1:
                             st.markdown(f"{pre_dosing_time}")
                             st.markdown("All Day")
                             st.markdown(f"{follow_up_time}")
+                        with col4:
+                            st.markdown("**Location**")
+                            st.markdown("26 Bedford Way")
+                            st.markdown("26 Bedford Way")
+                            st.markdown("1-19 Torrington Place")
+                            st.markdown("26 Bedford Way")
                         
-                        # Generate calendar file
-                        calendar_data = booking_system.generate_calendar_file(
-                            name, participant_id, group, 
-                            baseline_date, baseline_time, 
-                            pre_dosing_date, pre_dosing_time, 
-                            dosing_date, 
-                            follow_up_date, follow_up_time
-                        )
-                        
-                        # Add email confirmation message
-                        # Add confirmation instructions
+                        # Add manual planner reminder message
                         st.markdown("---")
-                        st.warning("⚠️ IMPORTANT: Please take a screenshot or print this page for your records.")
-                        st.info("A member of the DIPP team will contact you shortly at your provided email address to confirm these appointments.")
+                        st.info("⚠️ **Important**: Please write down these appointments in your planner or calendar. A member of the DIPP team will contact you to arrange the specific times within these blocks.")
                         
-                        # Offer calendar download
-                        st.download_button(
-                            label="Download Calendar File (.ics)",
-                            data=calendar_data,
-                            file_name=f"study_visits_{participant_id}.ics",
-                            mime="text/calendar"
-                        )
+                        # Offer printable schedule option
+                        st.markdown("""
+                        ### 📝 Your DIPP Study Schedule
                         
-                        st.markdown("Please take a screenshot or print this page for your records.")
+                        Please copy or write down the following information in your personal calendar:
+                        
+                        **Visit 1 (Baseline)**  
+                        Date: {baseline_date}  
+                        Time: {baseline_time}  
+                        Location: 26 Bedford Way, London
+                        
+                        **Visit 2 (Pre-dosing)**  
+                        Date: {pre_dosing_date}  
+                        Time: {pre_dosing_time}  
+                        Location: 26 Bedford Way, London
+                        
+                        **Visit 3 (Dosing Day)**  
+                        Date: {dosing_date}  
+                        Time: All Day  
+                        Location: 1-19 Torrington Place, London
+                        
+                        **Visit 4 (Follow-up)**  
+                        Date: {follow_up_date}  
+                        Time: {follow_up_time}  
+                        Location: 26 Bedford Way, London
+                        
+                        **Note**: The DIPP research team will contact you to confirm the exact time within these blocks.
+                        """.format(
+                            baseline_date=baseline_date.strftime("%A, %B %d, %Y"),
+                            baseline_time=baseline_time,
+                            pre_dosing_date=pre_dosing_date.strftime("%A, %B %d, %Y"),
+                            pre_dosing_time=pre_dosing_time,
+                            dosing_date=dosing_date.strftime("%A, %B %d, %Y"),
+                            follow_up_date=follow_up_date.strftime("%A, %B %d, %Y"),
+                            follow_up_time=follow_up_time
+                        ))
                         
                     else:
                         st.error(f"❌ Booking Failed: {message}")
@@ -696,4 +677,4 @@ with tab2:
             st.info("In the production version, you can add controls here to configure email settings.")
     
     elif admin_password:
-        st.error("Incorrect password")
+        st.error("Incorrect password") 
