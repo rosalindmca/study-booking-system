@@ -8,39 +8,21 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pytz
 
-# Ensure settings file exists with correct date range
+# Always set settings file to May-Oct 2025
 def ensure_settings_file():
     settings_file = "booking_settings.json"
-    if not os.path.exists(settings_file):
-        # Create default settings
-        default_settings = {
-            "start_date": "2025-05-01",
-            "end_date": "2025-10-31"
-        }
-        with open(settings_file, 'w') as f:
-            json.dump(default_settings, f)
-        print(f"Created settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
-    else:
-        # Verify the file has valid settings
-        try:
-            with open(settings_file, 'r') as f:
-                settings = json.load(f)
-            # Make sure both required keys exist
-            if "start_date" not in settings or "end_date" not in settings:
-                settings["start_date"] = "2025-05-01"
-                settings["end_date"] = "2025-10-31"
-                with open(settings_file, 'w') as f:
-                    json.dump(settings, f)
-                print(f"Fixed settings file to include dates from {settings['start_date']} to {settings['end_date']}")
-        except:
-            # If the file is corrupted, recreate it
-            default_settings = {
-                "start_date": "2025-05-01",
-                "end_date": "2025-10-31"
-            }
-            with open(settings_file, 'w') as f:
-                json.dump(default_settings, f)
-            print(f"Recreated corrupted settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
+    
+    # Always use May-Oct range
+    default_settings = {
+        "start_date": "2025-05-01",
+        "end_date": "2025-10-31"
+    }
+    
+    # Always write these settings to file
+    with open(settings_file, 'w') as f:
+        json.dump(default_settings, f)
+    
+    print(f"Set settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
 
 # Call this function when the app starts
 ensure_settings_file()
@@ -83,9 +65,9 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=required_columns)
     
     def get_dosing_dates(self, group):
-        """Generate all possible dosing dates from fixed range: May 1 to October 31, 2025"""
-
-        # Fixed date range
+        """Generate all possible dosing dates from May 1 to October 31, 2025 - ALWAYS"""
+        
+        # ALWAYS use May-Oct range, regardless of settings
         start_date = datetime(2025, 5, 1).date()
         end_date = datetime(2025, 10, 31).date()
 
@@ -679,7 +661,7 @@ with tab2:
             else:
                 # Create options for selection
                 booking_options = {f"{row['participant_id']} - {row['name']} - {row['dosing_date']}": row['participant_id'] 
-                                  for _, row in active_bookings.iterrows()}
+                                for _, row in active_bookings.iterrows()}
                 
                 # Select booking to cancel
                 selected_booking = st.selectbox("Select Booking to Cancel", options=list(booking_options.keys()))
@@ -696,7 +678,7 @@ with tab2:
                             st.success(f"✅ {message}")
                         else:
                             st.error(f"❌ {message}")
-        
+
         with admin_tabs[2]:
             st.subheader("System Management")
             
@@ -713,73 +695,28 @@ with tab2:
                 else:
                     st.error(f"❌ {message}")
             
-            # Date range management
-            st.markdown("#### Manage Date Range")
-            st.info("Set the date range for available bookings. This affects which dates are shown to participants.")
-
-            # Get current date range settings (or default to May-Oct 2025)
-            current_settings = {}
-            settings_file = "booking_settings.json"
-
-            if os.path.exists(settings_file):
-                try:
-                    with open(settings_file, 'r') as f:
-                        current_settings = json.load(f)
-                except:
-                    current_settings = {
-                        "start_date": "2025-05-01",
-                        "end_date": "2025-10-31"
-                    }
-            else:
-                current_settings = {
-                    "start_date": "2025-05-01",
-                    "end_date": "2025-10-31"
-                }
-
-            # Create date inputs for start and end dates
+            # Date range management - Modified to be informational only since we're always using May-Oct
+            st.markdown("#### Available Date Range Information")
+            st.info("This booking system is configured to always show dosing dates from May 1, 2025 to October 31, 2025.")
+            
+            # Display current date range
+            st.markdown("##### Current Date Range (Fixed)")
             col1, col2 = st.columns(2)
             with col1:
-                # Convert string dates to datetime objects for the date_input
-                default_start = datetime.strptime(current_settings["start_date"], "%Y-%m-%d").date()
-                new_start_date = st.date_input(
-                    "Start Date", 
-                    value=default_start,
-                    min_value=datetime(2025, 1, 1).date(),
-                    max_value=datetime(2026, 12, 31).date()
-                )
-                
+                st.markdown("**Start Date:** May 1, 2025")
             with col2:
-                default_end = datetime.strptime(current_settings["end_date"], "%Y-%m-%d").date()
-                new_end_date = st.date_input(
-                    "End Date", 
-                    value=default_end,
-                    min_value=datetime(2025, 1, 1).date(),
-                    max_value=datetime(2026, 12, 31).date()
-                )
-
-            # Validate input
-            if new_start_date >= new_end_date:
-                st.error("Start date must be before end date")
-                can_save = False
-            else:
-                can_save = True
-
-            # Save settings button
-            if st.button("Save Date Range Settings", disabled=not can_save):
-                # Update settings
-                current_settings["start_date"] = new_start_date.strftime("%Y-%m-%d")
-                current_settings["end_date"] = new_end_date.strftime("%Y-%m-%d")
-                
-                # Save to file
-                with open(settings_file, 'w') as f:
-                    json.dump(current_settings, f)
-                
-                st.success(f"✅ Date range updated: {new_start_date.strftime('%B %d, %Y')} to {new_end_date.strftime('%B %d, %Y')}")
-                st.info("This will affect which dates are shown for new bookings.")
-
-            # Email settings
+                st.markdown("**End Date:** October 31, 2025")
+            
+            # Note about why date range cannot be changed
+            st.markdown("""
+            > **Note**: This range is fixed in the system and cannot be changed. This ensures that all possible
+            > dosing days from May to October are always available for participants to book.
+            """)
+            
+            # Email settings (optional)
             st.markdown("#### Email Settings")
             st.info("In the production version, you can add controls here to configure email settings.")
-    
-    elif admin_password:
-        st.error("Incorrect password") 
+            
+        else:
+            if admin_password:
+                st.error("Incorrect password")
