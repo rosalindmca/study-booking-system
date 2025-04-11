@@ -8,6 +8,43 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pytz
 
+# Ensure settings file exists with correct date range
+def ensure_settings_file():
+    settings_file = "booking_settings.json"
+    if not os.path.exists(settings_file):
+        # Create default settings
+        default_settings = {
+            "start_date": "2025-05-01",
+            "end_date": "2025-10-31"
+        }
+        with open(settings_file, 'w') as f:
+            json.dump(default_settings, f)
+        print(f"Created settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
+    else:
+        # Verify the file has valid settings
+        try:
+            with open(settings_file, 'r') as f:
+                settings = json.load(f)
+            # Make sure both required keys exist
+            if "start_date" not in settings or "end_date" not in settings:
+                settings["start_date"] = "2025-05-01"
+                settings["end_date"] = "2025-10-31"
+                with open(settings_file, 'w') as f:
+                    json.dump(settings, f)
+                print(f"Fixed settings file to include dates from {settings['start_date']} to {settings['end_date']}")
+        except:
+            # If the file is corrupted, recreate it
+            default_settings = {
+                "start_date": "2025-05-01",
+                "end_date": "2025-10-31"
+            }
+            with open(settings_file, 'w') as f:
+                json.dump(default_settings, f)
+            print(f"Recreated corrupted settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
+
+# Call this function when the app starts
+ensure_settings_file()
+
 # Set page config
 st.set_page_config(page_title="DIPP Study Visit Booking System", layout="wide")
 
@@ -50,20 +87,52 @@ class StudyBookingSystem:
         # Load date range from settings file
         settings_file = "booking_settings.json"
         
+        # Default range (as fallback)
+        default_start = datetime(2025, 5, 1).date()
+        default_end = datetime(2025, 10, 31).date()
+        
+        # Initialize variables
+        start_date = default_start
+        end_date = default_end
+        
+        # Attempt to read from settings file
         if os.path.exists(settings_file):
             try:
                 with open(settings_file, 'r') as f:
                     settings = json.load(f)
-                    start_date = datetime.strptime(settings["start_date"], "%Y-%m-%d").date()
-                    end_date = datetime.strptime(settings["end_date"], "%Y-%m-%d").date()
-            except:
-                # Fallback to default range if settings file is invalid
-                start_date = datetime(2025, 5, 1).date()
-                end_date = datetime(2025, 10, 31).date()
+                    
+                    # Check if required keys exist
+                    if "start_date" in settings and "end_date" in settings:
+                        start_date = datetime.strptime(settings["start_date"], "%Y-%m-%d").date()
+                        end_date = datetime.strptime(settings["end_date"], "%Y-%m-%d").date()
+                        
+                        # Extra validation - ensure end date is not before start date
+                        if end_date <= start_date:
+                            # Fall back to defaults if dates are invalid
+                            start_date = default_start
+                            end_date = default_end
+                            print("Warning: Invalid date range in settings (end date before start date)")
+                    else:
+                        # Fall back to defaults if keys are missing
+                        print("Warning: Required keys missing from settings file")
+            except Exception as e:
+                # Fall back to defaults if there's any error
+                print(f"Warning: Error reading settings file: {e}")
         else:
-            # Use default range if settings file doesn't exist
-            start_date = datetime(2025, 5, 1).date()
-            end_date = datetime(2025, 10, 31).date()
+            # Create a new settings file with default values
+            default_settings = {
+                "start_date": default_start.strftime("%Y-%m-%d"),
+                "end_date": default_end.strftime("%Y-%m-%d")
+            }
+            try:
+                with open(settings_file, 'w') as f:
+                    json.dump(default_settings, f)
+                print(f"Created new settings file with dates from {default_start} to {default_end}")
+            except Exception as e:
+                print(f"Warning: Could not create settings file: {e}")
+        
+        # For debugging - show what range we're actually using
+        print(f"Generating dates from {start_date} to {end_date}")
         
         dates = []
         current = start_date
@@ -76,14 +145,20 @@ class StudyBookingSystem:
                 dates.append(current)
             current += timedelta(days=1)
         
+        # For debugging - confirm how many dates were generated
+        print(f"Generated {len(dates)} {group} dates from {dates[0] if dates else 'None'} to {dates[-1] if dates else 'None'}")
+        
         # Filter out already booked dates (with active status)
-        # Ensure only one booking per dosing date
         booked_dates = []
         if 'dosing_date' in self.bookings.columns and not self.bookings.empty:
             active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
             booked_dates = [datetime.strptime(date, '%Y-%m-%d').date() for date in active_bookings['dosing_date']]
         
         available_dates = [date for date in dates if date not in booked_dates]
+        
+        # For debugging - confirm how many dates remain after filtering
+        print(f"Found {len(available_dates)} available {group} dates after filtering out booked slots")
+        
         return available_dates
     
     def get_pre_scan_date(self, dosing_date):
@@ -388,32 +463,6 @@ with tab1:
         if group:
             st.subheader(f"Step 3: Select {group.capitalize()} Dosing Date")
             dosing_dates = booking_system.get_dosing_dates(group)
-
-            # Debug information
-            if dosing_dates:
-                # Show total count and date range
-                st.write(f"Debug: Found {len(dosing_dates)} dates")
-                st.write(f"Debug: Date range from {dosing_dates[0].strftime('%B %d, %Y')} to {dosing_dates[-1].strftime('%B %d, %Y')}")
-                
-                # Count dates by month
-                month_counts = {}
-                for date in dosing_dates:
-                    month = date.strftime('%B')
-                    if month in month_counts:
-                        month_counts[month] += 1
-                    else:
-                        month_counts[month] = 1
-                
-                st.write("Debug: Dates per month:")
-                for month, count in month_counts.items():
-                    st.write(f"- {month}: {count} dates")
-                
-                # Check if selectbox is limiting displayed options
-                st.write("Debug: Selectbox may be limiting shown options. Try scrolling in the dropdown.")
-            else:
-                st.write("Debug: No dosing dates found.")
-
-            # You can comment out or remove this debug code once you've identified the issue
             
             if not dosing_dates:
                 st.warning("No available dosing dates for this group. All dates may be booked.")
