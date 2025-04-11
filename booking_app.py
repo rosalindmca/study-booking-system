@@ -388,6 +388,32 @@ with tab1:
         if group:
             st.subheader(f"Step 3: Select {group.capitalize()} Dosing Date")
             dosing_dates = booking_system.get_dosing_dates(group)
+
+            # Debug information
+            if dosing_dates:
+                # Show total count and date range
+                st.write(f"Debug: Found {len(dosing_dates)} dates")
+                st.write(f"Debug: Date range from {dosing_dates[0].strftime('%B %d, %Y')} to {dosing_dates[-1].strftime('%B %d, %Y')}")
+                
+                # Count dates by month
+                month_counts = {}
+                for date in dosing_dates:
+                    month = date.strftime('%B')
+                    if month in month_counts:
+                        month_counts[month] += 1
+                    else:
+                        month_counts[month] = 1
+                
+                st.write("Debug: Dates per month:")
+                for month, count in month_counts.items():
+                    st.write(f"- {month}: {count} dates")
+                
+                # Check if selectbox is limiting displayed options
+                st.write("Debug: Selectbox may be limiting shown options. Try scrolling in the dropdown.")
+            else:
+                st.write("Debug: No dosing dates found.")
+
+            # You can comment out or remove this debug code once you've identified the issue
             
             if not dosing_dates:
                 st.warning("No available dosing dates for this group. All dates may be booked.")
