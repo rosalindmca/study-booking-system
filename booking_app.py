@@ -83,84 +83,39 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=required_columns)
     
     def get_dosing_dates(self, group):
-        """Generate all possible dosing dates based on configured date range"""
-        # Load date range from settings file
-        settings_file = "booking_settings.json"
-        
-        # Default range (as fallback)
-        default_start = datetime(2025, 5, 1).date()
-        default_end = datetime(2025, 10, 31).date()
-        
-        # Initialize variables
-        start_date = default_start
-        end_date = default_end
-        
-        # Attempt to read from settings file
-        if os.path.exists(settings_file):
-            try:
-                with open(settings_file, 'r') as f:
-                    settings = json.load(f)
-                    
-                    # Check if required keys exist
-                    if "start_date" in settings and "end_date" in settings:
-                        start_date = datetime.strptime(settings["start_date"], "%Y-%m-%d").date()
-                        end_date = datetime.strptime(settings["end_date"], "%Y-%m-%d").date()
-                        
-                        # Extra validation - ensure end date is not before start date
-                        if end_date <= start_date:
-                            # Fall back to defaults if dates are invalid
-                            start_date = default_start
-                            end_date = default_end
-                            print("Warning: Invalid date range in settings (end date before start date)")
-                    else:
-                        # Fall back to defaults if keys are missing
-                        print("Warning: Required keys missing from settings file")
-            except Exception as e:
-                # Fall back to defaults if there's any error
-                print(f"Warning: Error reading settings file: {e}")
-        else:
-            # Create a new settings file with default values
-            default_settings = {
-                "start_date": default_start.strftime("%Y-%m-%d"),
-                "end_date": default_end.strftime("%Y-%m-%d")
-            }
-            try:
-                with open(settings_file, 'w') as f:
-                    json.dump(default_settings, f)
-                print(f"Created new settings file with dates from {default_start} to {default_end}")
-            except Exception as e:
-                print(f"Warning: Could not create settings file: {e}")
-        
-        # For debugging - show what range we're actually using
+        """Generate all possible dosing dates from fixed range: May 1 to October 31, 2025"""
+
+        # Fixed date range
+        start_date = datetime(2025, 5, 1).date()
+        end_date = datetime(2025, 10, 31).date()
+
         print(f"Generating dates from {start_date} to {end_date}")
-        
+
         dates = []
         current = start_date
-        
+
         # Wednesday (2) or Saturday (5)
         target_day = 2 if group == 'WEDNESDAY' else 5
-        
+
         while current <= end_date:
             if current.weekday() == target_day:
                 dates.append(current)
             current += timedelta(days=1)
-        
-        # For debugging - confirm how many dates were generated
+
         print(f"Generated {len(dates)} {group} dates from {dates[0] if dates else 'None'} to {dates[-1] if dates else 'None'}")
-        
+
         # Filter out already booked dates (with active status)
         booked_dates = []
         if 'dosing_date' in self.bookings.columns and not self.bookings.empty:
             active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
             booked_dates = [datetime.strptime(date, '%Y-%m-%d').date() for date in active_bookings['dosing_date']]
-        
+
         available_dates = [date for date in dates if date not in booked_dates]
-        
-        # For debugging - confirm how many dates remain after filtering
+
         print(f"Found {len(available_dates)} available {group} dates after filtering out booked slots")
-        
+
         return available_dates
-    
+
     def get_pre_scan_date(self, dosing_date):
         """Get pre-scan date (day before dosing)"""
         return dosing_date - timedelta(days=1)
