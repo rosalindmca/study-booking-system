@@ -101,35 +101,47 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=self.columns)
 
     def _save_latest_booking_to_sheet(self):
-        """Append the latest booking row to Google Sheets with improved error handling"""
+        """Append the latest booking row to Google Sheets with robust error handling"""
         try:
             if sheet is None:
                 st.error("Cannot save booking: No connection to Google Sheets")
                 return False
                     
+            # Get the latest row
+            if self.bookings.empty:
+                st.error("No bookings to save")
+                return False
+                
             latest = self.bookings.iloc[-1]
             
-            # Create a clean list of values to saved
+            # Manually create a list of strings for each column
             row_to_save = []
             for col in self.columns:
-                val = latest.get(col, "")
-                
-                # Convert values to strings to ensure they are JSON serializable
-                if pd.isna(val) or val is None:
-                    val = ""
-                elif isinstance(val, (datetime, pd.Timestamp)):
-                    val = val.strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                    val = str(val)
+                # Get the value, handle missing values
+                if col in latest:
+                    val = latest[col]
                     
-                row_to_save.append(val)
+                    # Convert different types to strings
+                    if pd.isna(val) or val is None:
+                        row_to_save.append("")
+                    elif isinstance(val, (datetime, pd.Timestamp)):
+                        row_to_save.append(val.strftime('%Y-%m-%d %H:%M:%S'))
+                    else:
+                        row_to_save.append(str(val))
+                else:
+                    row_to_save.append("")
             
-            # Append to the sheet
-            sheet.append_row(row_to_save, value_input_option='USER_ENTERED')
+            # Debug info
+            st.sidebar.text(f"Saving row with {len(row_to_save)} values")
+            
+            # Append to sheet directly with values parameter
+            # This avoids the JSON serialization issue
+            sheet.append_row(row_to_save, value_input_option='RAW')
             return True
                 
         except Exception as e:
-            st.error(f"Error saving booking to Google Sheets: {str(e)}")
+            st.error(f"Error saving booking: {str(e)}")
+            st.sidebar.error(f"Error details: {type(e).__name__}: {str(e)}")
             return False
 
     def get_all_bookings(self):
