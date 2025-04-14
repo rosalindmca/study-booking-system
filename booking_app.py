@@ -300,53 +300,66 @@ class StudyBookingSystem:
 
     def book_participant(self, name, participant_id, email, group, baseline_date, pre_dosing_date,
                         dosing_date, follow_up_date, pre_dosing_time, follow_up_time):
-        """Book a participant for all four visits"""
-        # Validate the booking dates
-        if not self._validate_booking(baseline_date, pre_dosing_date, dosing_date, follow_up_date, group):
-            return False, "Invalid booking dates. Please try again with different dates."
+        """Book a participant for all four visits with fixed DataFrame handling"""
+        try:
+            # Validate the booking dates
+            if not self._validate_booking(baseline_date, pre_dosing_date, dosing_date, follow_up_date, group):
+                return False, "Invalid booking dates. Please try again with different dates."
 
-        # Check for existing active bookings with this participant ID
-        if not self.bookings.empty and 'participant_id' in self.bookings.columns:
-            active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
-            if not active_bookings.empty and participant_id in active_bookings['participant_id'].values:
-                return False, "Participant ID already has an active booking"
+            # Check for existing active bookings with this participant ID
+            if not self.bookings.empty and 'participant_id' in self.bookings.columns:
+                active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
+                if not active_bookings.empty and participant_id in active_bookings['participant_id'].values:
+                    return False, "Participant ID already has an active booking"
 
-        # Set baseline time based on group
-        baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
+            # Set baseline time based on group
+            baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
 
-        # Create new booking record - FIXED VERSION
-        new_booking = pd.DataFrame({
-            'name': [name],
-            'participant_id': [participant_id],
-            'email': [email],
-            'group': [group],
-            'baseline_date': [baseline_date.strftime('%Y-%m-%d')],
-            'baseline_time': [baseline_time],
-            'pre_dosing_date': [pre_dosing_date.strftime('%Y-%m-%d')],
-            'pre_dosing_time': [pre_dosing_time],
-            'dosing_date': [dosing_date.strftime('%Y-%m-%d')],
-            'dosing_time': ['All Day'],
-            'follow_up_date': [follow_up_date.strftime('%Y-%m-%d')],
-            'follow_up_time': [follow_up_time],
-            'booking_status': ['Active'],
-            'notes': [''],
-            'booking_time': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-            'cancellation_time': ['']
-        })
+            # Create booking data as a dictionary
+            booking_data = {
+                'name': name,
+                'participant_id': participant_id, 
+                'email': email,
+                'group': group,
+                'baseline_date': baseline_date.strftime('%Y-%m-%d'),
+                'baseline_time': baseline_time,
+                'pre_dosing_date': pre_dosing_date.strftime('%Y-%m-%d'),
+                'pre_dosing_time': pre_dosing_time,
+                'dosing_date': dosing_date.strftime('%Y-%m-%d'),
+                'dosing_time': 'All Day',
+                'follow_up_date': follow_up_date.strftime('%Y-%m-%d'),
+                'follow_up_time': follow_up_time,
+                'booking_status': 'Active',
+                'notes': '',
+                'booking_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'cancellation_time': ''
+            }
 
-        # Reset indexes to ensure they're unique before concatenation
-        if not self.bookings.empty:
-            self.bookings = self.bookings.reset_index(drop=True)
-        new_booking = new_booking.reset_index(drop=True)
-        
-        # Add to in-memory dataframe
-        self.bookings = pd.concat([self.bookings, new_booking], ignore_index=True)
-        
-        # Save to Google Sheets
-        if not self._save_latest_booking_to_sheet():
-            return False, "Booking created but failed to save to Google Sheets"
+            # Create as a list to avoid index issues
+            booking_row = []
+            for col in self.columns:
+                booking_row.append(booking_data.get(col, ''))
+                
+            # Save directly to Google Sheets first
+            if sheet is not None:
+                try:
+                    sheet.append_row(booking_row)
+                except Exception as e:
+                    return False, f"Failed to save booking to Google Sheets: {str(e)}"
             
-        return True, "Booking successful"
+            # Update local dataframe - safer approach avoiding concat
+            if self.bookings.empty:
+                # If empty, create new DataFrame with column order
+                self.bookings = pd.DataFrame([booking_row], columns=self.columns)
+            else:
+                # Add as a new row - avoiding concat altogether
+                self.bookings.loc[len(self.bookings)] = booking_row
+                
+            return True, "Booking successful"
+            
+        except Exception as e:
+            st.error(f"Error in booking process: {str(e)}")
+            return False, f"Booking failed due to an error: {str(e)}"
 
     def cancel_booking(self, participant_id, reason):
         """Cancel an existing booking with simplified approach"""
