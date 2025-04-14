@@ -4,6 +4,21 @@ from datetime import datetime, timedelta
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+# Add this at the top of your file, after the imports
+def serialize_for_debug(obj):
+    """Convert any object to a safe string for debugging"""
+    if pd.isna(obj) or obj is None:
+        return "NULL"
+    elif isinstance(obj, (datetime, pd.Timestamp)):
+        return obj.strftime('%Y-%m-%d %H:%M:%S')
+    elif isinstance(obj, (list, tuple, set)):
+        return [serialize_for_debug(x) for x in obj]
+    elif isinstance(obj, dict):
+        return {str(k): serialize_for_debug(v) for k, v in obj.items()}
+    elif isinstance(obj, pd.DataFrame):
+        return f"DataFrame with {len(obj)} rows"
+    else:
+        return str(obj)
 
 # App configuration and settings
 st.set_page_config(
@@ -101,12 +116,12 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=self.columns)
 
     def _save_latest_booking_to_sheet(self):
-        """Alternative approach using direct API calls"""
+        """Append the latest booking to Google Sheets with improved error handling"""
         try:
             if sheet is None:
                 st.error("Cannot save booking: No connection to Google Sheets")
                 return False
-                    
+                
             # Get the latest row
             if self.bookings.empty:
                 st.error("No bookings to save")
@@ -114,31 +129,24 @@ class StudyBookingSystem:
                 
             latest = self.bookings.iloc[-1]
             
-            # Use a dictionary first for easier debugging
-            values_dict = {}
+            # Create a simple list of strings - avoid complex data structures
+            row_to_save = []
             for col in self.columns:
-                if col in latest:
+                if col in latest.index:
                     val = latest[col]
                     if pd.isna(val) or val is None:
-                        values_dict[col] = ""
+                        row_to_save.append("")
                     elif isinstance(val, (datetime, pd.Timestamp)):
-                        values_dict[col] = val.strftime('%Y-%m-%d %H:%M:%S')
+                        row_to_save.append(val.strftime('%Y-%m-%d %H:%M:%S'))
                     else:
-                        values_dict[col] = str(val)
+                        row_to_save.append(str(val))
                 else:
-                    values_dict[col] = ""
+                    row_to_save.append("")
             
-            # Convert dictionary to list in correct order
-            row_to_save = [values_dict[col] for col in self.columns]
-            
-            # Append as a value range which is more reliable
-            values = [row_to_save]  # A list of rows (in this case, just one row)
-            sheet.values_append(
-                range_name='A1', 
-                params={'valueInputOption': 'RAW'},
-                body={'values': values}
-            )
+            # Use the simplest method to append a row - avoid values_append
+            sheet.append_row(row_to_save, value_input_option='RAW')
             return True
+                
         except Exception as e:
             st.error(f"Error saving booking: {str(e)}")
             st.sidebar.error(f"Error details: {type(e).__name__}: {str(e)}")
@@ -284,46 +292,55 @@ class StudyBookingSystem:
         return True, "Booking successful"
 
     def cancel_booking(self, participant_id, reason):
-        """Cancel an existing booking"""
+        """Cancel an existing booking with improved error handling"""
         try:
             if sheet is None:
                 return False, "Cannot cancel booking: No connection to Google Sheets"
                 
-            # Find row number of the participant
-            cell = sheet.find(participant_id)
-            if not cell:
-                return False, f"Could not find participant with ID: {participant_id}"
-                
-            row_number = cell.row
-
-            # Get current row values
-            current_values = sheet.row_values(row_number)
-
-            # Get headers
-            headers = sheet.row_values(1)
-
-            # Create a dict of current row values
-            data_dict = dict(zip(headers, current_values))
-
-            # Update fields
-            data_dict["booking_status"] = "Cancelled"
-            data_dict["notes"] = f"Cancelled: {reason}"
-            data_dict["cancellation_time"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            # Ensure all expected columns exist
-            updated_row = [data_dict.get(col, "") for col in headers]
-
-            # Update the full row in Google Sheets
-            sheet.update(f"A{row_number}:P{row_number}", [updated_row])
-
-            # Also update in memory
+            # Find the booking in our dataframe first
             idx = self.bookings[self.bookings['participant_id'] == participant_id].index
-            if not idx.empty:
-                self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
-                self.bookings.loc[idx, 'notes'] = data_dict["notes"]
-                self.bookings.loc[idx, 'cancellation_time'] = data_dict["cancellation_time"]
-
-            return True, "Booking cancelled successfully"
+            if len(idx) == 0:
+                return False, f"Could not find participant with ID: {participant_id}"
+            
+            # Update in memory first
+            self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
+            self.bookings.loc[idx, 'notes'] = f"Cancelled: {reason}"
+            self.bookings.loc[idx, 'cancellation_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Now find the row in the sheet
+            try:
+                cell = sheet.find(participant_id)
+                row_number = cell.row
+            except Exception as e:
+                return False, f"Error finding participant in sheet: {str(e)}"
+            
+            # Create a simple list of strings for the updated row
+            headers = sheet.row_values(1)
+            row_dict = {}
+            for col in headers:
+                row_dict[col] = ""  # Default empty value
+            
+            # Fill in the values we have from our dataframe
+            row_idx = idx[0]  # First matching index
+            for col in headers:
+                if col in self.bookings.columns:
+                    val = self.bookings.loc[row_idx, col]
+                    if pd.isna(val) or val is None:
+                        row_dict[col] = ""
+                    elif isinstance(val, (datetime, pd.Timestamp)):
+                        row_dict[col] = val.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        row_dict[col] = str(val)
+            
+            # Convert the dictionary to a list in the correct column order
+            updated_row = [row_dict.get(col, "") for col in headers]
+            
+            # Update the sheet
+            try:
+                sheet.update(f'A{row_number}:P{row_number}', [updated_row])
+                return True, "Booking cancelled successfully"
+            except Exception as e:
+                return False, f"Error updating sheet: {str(e)}"
 
         except Exception as e:
             return False, f"Error cancelling booking: {str(e)}"
@@ -333,10 +350,20 @@ class StudyBookingSystem:
         try:
             if sheet is None:
                 return False, "Cannot reset bookings: No connection to Google Sheets"
-                
-            # Clear all rows in the sheet except the header row
-            if sheet.row_count > 1:
-                sheet.delete_rows(2, sheet.row_count)  # Delete from row 2 to the end
+            
+            # Get the current row count
+            try:
+                row_count = sheet.row_count
+            except Exception as e:
+                return False, f"Error getting row count: {str(e)}"
+            
+            # Only delete rows if there are more than just the header
+            if row_count > 1:
+                try:
+                    # Delete all rows except the first (header) row
+                    sheet.delete_rows(2, row_count - 1)
+                except Exception as e:
+                    return False, f"Error deleting rows: {str(e)}"
             
             # Reset the in-memory dataframe
             self.bookings = pd.DataFrame(columns=self.columns)
@@ -739,6 +766,24 @@ with tab2:
         
         with admin_tabs[2]:
             st.subheader("System Management")
+
+            # Add this inside the admin tab, in the "System Management" section
+            st.markdown("#### Debug Information")
+            if st.button("Show Debug Info"):
+                st.write("App Version: 1.0.1")
+                st.write("Google Sheet Connection:", "Connected" if sheet else "Not Connected")
+                
+                if not booking_system.bookings.empty:
+                    st.write(f"Bookings in memory: {len(booking_system.bookings)}")
+                    st.write("Columns:", list(booking_system.bookings.columns))
+                    
+                    # Show a sample of data
+                    st.write("Sample booking data (first row):")
+                    first_row = booking_system.bookings.iloc[0]
+                    safe_row = {col: serialize_for_debug(first_row[col]) for col in booking_system.bookings.columns}
+                    st.json(safe_row)
+                else:
+                    st.write("No bookings in memory") 
             
             # Reset all bookings (for piloting)
             st.markdown("#### Reset All Bookings")
