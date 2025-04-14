@@ -307,58 +307,56 @@ class StudyBookingSystem:
         return True, "Booking successful"
 
     def cancel_booking(self, participant_id, reason):
-        """Cancel an existing booking with improved error handling"""
+        """Cancel an existing booking with simplified approach"""
         try:
             if sheet is None:
                 return False, "Cannot cancel booking: No connection to Google Sheets"
-                
-            # Find the booking in our dataframe first
-            idx = self.bookings[self.bookings['participant_id'] == participant_id].index
-            if len(idx) == 0:
-                return False, f"Could not find participant with ID: {participant_id}"
             
-            # Update in memory first
-            self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
-            self.bookings.loc[idx, 'notes'] = f"Cancelled: {reason}"
-            self.bookings.loc[idx, 'cancellation_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # First check if the booking exists in our dataframe
+            matching_bookings = self.bookings[self.bookings['participant_id'] == participant_id]
+            if matching_bookings.empty:
+                return False, f"Could not find booking for participant ID: {participant_id}"
             
-            # Now find the row in the sheet
+            # Find row in Google Sheet
             try:
                 cell = sheet.find(participant_id)
                 row_number = cell.row
             except Exception as e:
-                return False, f"Error finding participant in sheet: {str(e)}"
+                return False, f"Error finding booking in sheet: {str(e)}"
             
-            # Create a simple list of strings for the updated row
+            # Get current values
+            current_row = sheet.row_values(row_number)
             headers = sheet.row_values(1)
-            row_dict = {}
-            for col in headers:
-                row_dict[col] = ""  # Default empty value
             
-            # Fill in the values we have from our dataframe
-            row_idx = idx[0]  # First matching index
-            for col in headers:
-                if col in self.bookings.columns:
-                    val = self.bookings.loc[row_idx, col]
-                    if pd.isna(val) or val is None:
-                        row_dict[col] = ""
-                    elif isinstance(val, (datetime, pd.Timestamp)):
-                        row_dict[col] = val.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        row_dict[col] = str(val)
+            # Build a dictionary of the current values
+            row_dict = dict(zip(headers, current_row))
             
-            # Convert the dictionary to a list in the correct column order
-            updated_row = [row_dict.get(col, "") for col in headers]
+            # Update only the necessary fields
+            row_dict['booking_status'] = 'Cancelled'
+            row_dict['notes'] = f"Cancelled: {reason}"
+            row_dict['cancellation_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # Update the sheet
+            # Build the updated row, preserving original values for other fields
+            updated_row = []
+            for header in headers:
+                updated_row.append(row_dict.get(header, ""))
+            
+            # Update the row in the sheet
             try:
-                sheet.update(f'A{row_number}:P{row_number}', [updated_row])
+                sheet.update(f'A{row_number}:{chr(65 + len(headers) - 1)}{row_number}', [updated_row])
+                
+                # Also update in the dataframe
+                idx = matching_bookings.index[0]
+                self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
+                self.bookings.loc[idx, 'notes'] = row_dict['notes']
+                self.bookings.loc[idx, 'cancellation_time'] = row_dict['cancellation_time']
+                
                 return True, "Booking cancelled successfully"
             except Exception as e:
-                return False, f"Error updating sheet: {str(e)}"
-
+                return False, f"Error updating booking in sheet: {str(e)}"
+                
         except Exception as e:
-            return False, f"Error cancelling booking: {str(e)}"
+            return False, f"Error in cancellation process: {str(e)}"
 
     def reset_all_bookings(self):
         """Clear all bookings from Google Sheets - for admin use only"""
@@ -366,24 +364,20 @@ class StudyBookingSystem:
             if sheet is None:
                 return False, "Cannot reset bookings: No connection to Google Sheets"
             
-            # Get the current row count
+            # Instead of trying to delete rows, let's clear all values and then re-add headers
             try:
-                row_count = sheet.row_count
+                # Clear all values in the sheet (including headers)
+                sheet.clear()
+                
+                # Add back the headers
+                sheet.append_row(self.columns)
+                
+                # Reset the in-memory dataframe
+                self.bookings = pd.DataFrame(columns=self.columns)
+                
+                return True, "All bookings have been reset successfully"
             except Exception as e:
-                return False, f"Error getting row count: {str(e)}"
-            
-            # Only delete rows if there are more than just the header
-            if row_count > 1:
-                try:
-                    # Delete all rows except the first (header) row
-                    sheet.delete_rows(2, row_count - 1)
-                except Exception as e:
-                    return False, f"Error deleting rows: {str(e)}"
-            
-            # Reset the in-memory dataframe
-            self.bookings = pd.DataFrame(columns=self.columns)
-            
-            return True, "All bookings have been reset"
+                return False, f"Error resetting bookings: {str(e)}"
         except Exception as e:
             return False, f"Error resetting bookings: {str(e)}"
 
