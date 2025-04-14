@@ -92,15 +92,30 @@ class StudyBookingSystem:
         self._load_bookings_from_sheet()
 
     def _load_bookings_from_sheet(self):
-        """Load data from Google Sheets"""
+        """Load data from Google Sheets with improved error handling for empty sheets"""
         try:
             if sheet is None:
                 self.bookings = pd.DataFrame(columns=self.columns)
                 return
+            
+            # Check if the sheet has headers
+            headers = sheet.row_values(1)
+            
+            # If no headers, initialize them
+            if not headers:
+                sheet.append_row(self.columns)
+                st.sidebar.info("Initialized sheet with headers")
+                self.bookings = pd.DataFrame(columns=self.columns)
+                return
                 
-            # Get all records from the sheet
-            records = sheet.get_all_records()
-            self.bookings = pd.DataFrame(records)
+            # Otherwise, get all records
+            try:
+                records = sheet.get_all_records()
+                self.bookings = pd.DataFrame(records)
+            except Exception as e:
+                st.error(f"Error getting records: {str(e)}")
+                self.bookings = pd.DataFrame(columns=self.columns)
+                return
 
             # If sheet is empty (besides headers)
             if self.bookings.empty:
