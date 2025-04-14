@@ -717,6 +717,6 @@ with tab2:
             st.markdown("#### Email Settings")
             st.info("In the production version, you can add controls here to configure email settings.")
             
-        else:
-            if admin_password:
-                st.error("Incorrect password")
+    else:
+        if admin_password:
+            st.error("Incorrect password")
