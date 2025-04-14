@@ -8,32 +8,39 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pytz
 
-# Add the backup system here
-# Ensure we have a backup copy each time the app starts
-if os.path.exists("study_bookings.json"):
-    backup_path = f"study_bookings_backup_startup.json"
-    try:
-        import shutil
-        shutil.copy("study_bookings.json", backup_path)
-        print(f"Created startup backup of bookings")
-    except Exception as e:
-        print(f"Failed to create startup backup: {e}")
-
-# Always set settings file to May-Oct 2025
+# Ensure settings file exists with correct date range
 def ensure_settings_file():
     settings_file = "booking_settings.json"
-    
-    # Always use May-Oct range
-    default_settings = {
-        "start_date": "2025-05-01",
-        "end_date": "2025-10-31"
-    }
-    
-    # Always write these settings to file
-    with open(settings_file, 'w') as f:
-        json.dump(default_settings, f)
-    
-    print(f"Set settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
+    if not os.path.exists(settings_file):
+        # Create default settings
+        default_settings = {
+            "start_date": "2025-05-01",
+            "end_date": "2025-10-31"
+        }
+        with open(settings_file, 'w') as f:
+            json.dump(default_settings, f)
+        print(f"Created settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
+    else:
+        # Verify the file has valid settings
+        try:
+            with open(settings_file, 'r') as f:
+                settings = json.load(f)
+            # Make sure both required keys exist
+            if "start_date" not in settings or "end_date" not in settings:
+                settings["start_date"] = "2025-05-01"
+                settings["end_date"] = "2025-10-31"
+                with open(settings_file, 'w') as f:
+                    json.dump(settings, f)
+                print(f"Fixed settings file to include dates from {settings['start_date']} to {settings['end_date']}")
+        except:
+            # If the file is corrupted, recreate it
+            default_settings = {
+                "start_date": "2025-05-01",
+                "end_date": "2025-10-31"
+            }
+            with open(settings_file, 'w') as f:
+                json.dump(default_settings, f)
+            print(f"Recreated corrupted settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
 
 # Call this function when the app starts
 ensure_settings_file()
@@ -76,9 +83,9 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=required_columns)
     
     def get_dosing_dates(self, group):
-        """Generate all possible dosing dates from May 1 to October 31, 2025 - ALWAYS"""
-        
-        # ALWAYS use May-Oct range, regardless of settings
+        """Generate all possible dosing dates from fixed range: May 1 to October 31, 2025"""
+
+        # Fixed date range
         start_date = datetime(2025, 5, 1).date()
         end_date = datetime(2025, 10, 31).date()
 
@@ -322,23 +329,9 @@ class StudyBookingSystem:
         return self.bookings
     
     def _save_bookings(self):
-        """Save bookings to file with error confirmation"""
-        try:
-            # Create a backup first
-            backup_file = f"study_bookings_backup_latest.json"
-            with open(backup_file, 'w') as f:
-                f.write(self.bookings.to_json(orient='records'))
-                
-            # Then save the main file
-            with open(self.bookings_file, 'w') as f:
-                f.write(self.bookings.to_json(orient='records'))
-            
-            print(f"Successfully saved bookings to {os.path.abspath(self.bookings_file)}")
-            return True
-        except Exception as e:
-            print(f"ERROR SAVING BOOKING: {e}")
-            st.error(f"Error saving booking: {e}. Please contact the administrator.")
-            return False
+        """Save bookings to file"""
+        with open(self.bookings_file, 'w') as f:
+            f.write(self.bookings.to_json(orient='records'))
 
 # Initialize the booking system
 @st.cache_resource
@@ -534,11 +527,8 @@ with tab1:
                         pre_dosing_time, follow_up_time
                     )
                     
-                    # Check that file was saved successfully
-                    file_saved = os.path.exists("study_bookings.json")
-                    
-                    if success and file_saved:
-                        st.success("✅ Booking Confirmed! Your booking has been saved to our system.")
+                    if success:
+                        st.success("✅ Booking Confirmed!")
                         
                         st.markdown(f"**Name:** {name}")
                         st.markdown(f"**Participant ID:** {participant_id}")
@@ -617,10 +607,7 @@ with tab1:
                         ))
                         
                     else:
-                        error_message = message
-                        if not file_saved:
-                            error_message = "System could not save your booking. Please take a screenshot and contact us."
-                        st.error(f"❌ Booking Issue: {error_message}")
+                        st.error(f"❌ Booking Failed: {message}")
     else:
         st.info("Please enter your name, participant ID, and email address to continue.")
 
@@ -692,7 +679,7 @@ with tab2:
             else:
                 # Create options for selection
                 booking_options = {f"{row['participant_id']} - {row['name']} - {row['dosing_date']}": row['participant_id'] 
-                                for _, row in active_bookings.iterrows()}
+                                  for _, row in active_bookings.iterrows()}
                 
                 # Select booking to cancel
                 selected_booking = st.selectbox("Select Booking to Cancel", options=list(booking_options.keys()))
@@ -709,7 +696,7 @@ with tab2:
                             st.success(f"✅ {message}")
                         else:
                             st.error(f"❌ {message}")
-
+        
         with admin_tabs[2]:
             st.subheader("System Management")
             
@@ -726,28 +713,74 @@ with tab2:
                 else:
                     st.error(f"❌ {message}")
             
-            # Date range management - Modified to be informational only since we're always using May-Oct
-            st.markdown("#### Available Date Range Information")
-            st.info("This booking system is configured to always show dosing dates from May 1, 2025 to October 31, 2025.")
-            
-            # Display current date range
-            st.markdown("##### Current Date Range (Fixed)")
+            # Date range management
+            st.markdown("#### Manage Date Range")
+            st.info("Set the date range for available bookings. This affects which dates are shown to participants.")
+
+            # Get current date range settings (or default to May-Oct 2025)
+            current_settings = {}
+            settings_file = "booking_settings.json"
+
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, 'r') as f:
+                        current_settings = json.load(f)
+                except:
+                    current_settings = {
+                        "start_date": "2025-05-01",
+                        "end_date": "2025-10-31"
+                    }
+            else:
+                current_settings = {
+                    "start_date": "2025-05-01",
+                    "end_date": "2025-10-31"
+                }
+
+            # Create date inputs for start and end dates
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("**Start Date:** May 1, 2025")
+                # Convert string dates to datetime objects for the date_input
+                default_start = datetime.strptime(current_settings["start_date"], "%Y-%m-%d").date()
+                new_start_date = st.date_input(
+                    "Start Date", 
+                    value=default_start,
+                    min_value=datetime(2025, 1, 1).date(),
+                    max_value=datetime(2026, 12, 31).date()
+                )
+                
             with col2:
-                st.markdown("**End Date:** October 31, 2025")
-            
-            # Note about why date range cannot be changed
-            st.markdown("""
-            > **Note**: This range is fixed in the system and cannot be changed. This ensures that all possible
-            > dosing days from May to October are always available for participants to book.
-            """)
-            
-            # Email settings (optional)
+                default_end = datetime.strptime(current_settings["end_date"], "%Y-%m-%d").date()
+                new_end_date = st.date_input(
+                    "End Date", 
+                    value=default_end,
+                    min_value=datetime(2025, 1, 1).date(),
+                    max_value=datetime(2026, 12, 31).date()
+                )
+
+            # Validate input
+            if new_start_date >= new_end_date:
+                st.error("Start date must be before end date")
+                can_save = False
+            else:
+                can_save = True
+
+            # Save settings button
+            if st.button("Save Date Range Settings", disabled=not can_save):
+                # Update settings
+                current_settings["start_date"] = new_start_date.strftime("%Y-%m-%d")
+                current_settings["end_date"] = new_end_date.strftime("%Y-%m-%d")
+                
+                # Save to file
+                with open(settings_file, 'w') as f:
+                    json.dump(current_settings, f)
+                
+                st.success(f"✅ Date range updated: {new_start_date.strftime('%B %d, %Y')} to {new_end_date.strftime('%B %d, %Y')}")
+                st.info("This will affect which dates are shown for new bookings.")
+
+            # Email settings
             st.markdown("#### Email Settings")
             st.info("In the production version, you can add controls here to configure email settings.")
-            
-    else:
-        if admin_password:
-            st.error("Incorrect password")
+    
+    elif admin_password:
+        st.error("Incorrect password") 
+
