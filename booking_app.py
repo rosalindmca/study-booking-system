@@ -152,16 +152,42 @@ class StudyBookingSystem:
         return True, "Booking successful"
 
     def cancel_booking(self, participant_id, reason):
-        idx = self.bookings[self.bookings['participant_id'] == participant_id].index
-        if idx.empty:
-            return False, "Participant ID not found"
+        try:
+            # Find row number of the participant
+            cell = sheet.find(participant_id)
+            row_number = cell.row
 
-        self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
-        self.bookings.loc[idx, 'notes'] = f"Cancelled: {reason}"
-        self.bookings.loc[idx, 'cancellation_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # Get current row values
+            current_values = sheet.row_values(row_number)
 
-        # Note: we don’t save to Google Sheets again since it’s append-only
-        return True, "Booking cancelled successfully"
+            # Get headers
+            headers = sheet.row_values(1)
+
+            # Create a dict of current row values
+            data_dict = dict(zip(headers, current_values))
+
+            # Update fields
+            data_dict["booking_status"] = "Cancelled"
+            data_dict["notes"] = f"Cancelled: {reason}"
+            data_dict["cancellation_time"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # Ensure all expected columns exist
+            updated_row = [data_dict.get(col, "") for col in headers]
+
+            # Update the full row in Google Sheets (safe format)
+            sheet.update(f"A{row_number}", [updated_row])
+
+            # Also update in memory
+            idx = self.bookings[self.bookings['participant_id'] == participant_id].index
+            self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
+            self.bookings.loc[idx, 'notes'] = data_dict["notes"]
+            self.bookings.loc[idx, 'cancellation_time'] = data_dict["cancellation_time"]
+
+            return True, "Booking cancelled successfully"
+
+        except Exception as e:
+            return False, f"Error cancelling booking: {str(e)}"
+
 
     def _validate_booking(self, baseline, pre_dosing, dosing, follow_up, group):
         if group == 'WEDNESDAY' and dosing.weekday() != 2:
