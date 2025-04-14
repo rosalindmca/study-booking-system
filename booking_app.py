@@ -4,6 +4,27 @@ from datetime import datetime, timedelta
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+def check_secrets_configuration():
+    """Check if secrets are properly configured and display appropriate messages"""
+    if "google_sheets" not in st.secrets:
+        st.sidebar.warning("⚠️ Google Sheets credentials not configured")
+        st.sidebar.info("To enable Google Sheets integration, add credentials to Streamlit secrets")
+        return False
+        
+    required_keys = ["type", "project_id", "private_key_id", "private_key", 
+                     "client_email", "client_id"]
+                     
+    missing_keys = [key for key in required_keys if key not in st.secrets["google_sheets"]]
+    
+    if missing_keys:
+        st.sidebar.warning(f"⚠️ Missing required credentials: {', '.join(missing_keys)}")
+        return False
+        
+    return True
+
+# Call this function right after defining it
+secrets_configured = check_secrets_configuration()
+
 # Add this at the top of your file, after the imports
 def serialize_for_debug(obj):
     """Convert any object to a safe string for debugging"""
@@ -41,39 +62,48 @@ def get_gsheet():
         scope = ["https://spreadsheets.google.com/feeds", 
                 "https://www.googleapis.com/auth/drive"]
         
-        # Get credentials from secrets
+        # Check if Google Sheets credentials exist in secrets
         if "google_sheets" not in st.secrets:
             st.sidebar.error("Google Sheets credentials not found in secrets")
+            st.sidebar.info("Running in local mode without Google Sheets connection")
             return None
             
         # Create credentials from the secrets dictionary
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            st.secrets["google_sheets"], scope)
+        try:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(
+                st.secrets["google_sheets"], scope)
+        except Exception as cred_error:
+            st.sidebar.error(f"Error creating credentials: {str(cred_error)}")
+            return None
         
         # Authorize with Google
-        client = gspread.authorize(creds)
+        try:
+            client = gspread.authorize(creds)
+        except Exception as auth_error:
+            st.sidebar.error(f"Authorization failed: {str(auth_error)}")
+            return None
         
         # Open the specific sheet - get name from secrets or use default
         sheet_name = st.secrets.get("sheet_name", "DIPP_Bookings")
-        sheet = client.open(sheet_name).sheet1
+        try:
+            sheet = client.open(sheet_name).sheet1
+        except Exception as sheet_error:
+            st.sidebar.error(f"Could not open sheet '{sheet_name}': {str(sheet_error)}")
+            return None
         
-        # Verify connection by getting the headers
-        headers = sheet.row_values(1)
-        
-        # If sheet is empty, initialize with headers
-        if not headers:
-            sheet.append_row([
-                'name', 'participant_id', 'email', 'group', 'baseline_date', 
-                'baseline_time', 'pre_dosing_date', 'pre_dosing_time', 
-                'dosing_date', 'dosing_time', 'follow_up_date', 'follow_up_time', 
-                'booking_status', 'notes', 'booking_time', 'cancellation_time'
-            ])
-            st.sidebar.info("Initialized sheet with headers")
-        
-        st.sidebar.success("✅ Connected to Google Sheets")
-        return sheet
+        # Quick verification that we can access the sheet
+        try:
+            # Just check if we can get a cell value
+            sheet.cell(1, 1)
+            st.sidebar.success("✅ Connected to Google Sheets")
+            return sheet
+        except Exception as access_error:
+            st.sidebar.error(f"Could not access sheet data: {str(access_error)}")
+            return None
+            
     except Exception as e:
         st.sidebar.error(f"Error connecting to Google Sheets: {str(e)}")
+        st.sidebar.info("Running in local mode without Google Sheets connection")
         return None
 
 # Get the sheet connection
@@ -89,47 +119,53 @@ class StudyBookingSystem:
             'follow_up_date', 'follow_up_time', 'booking_status', 'notes', 'booking_time',
             'cancellation_time'
         ]
-        self._load_bookings_from_sheet()
-
-def _load_bookings_from_sheet(self):
-    """Super simplified booking loading function"""
-    try:
-        if sheet is None:
-            self.bookings = pd.DataFrame(columns=self.columns)
-            return
-            
-        try:
-            # Get ALL cell values
-            all_cells = sheet.get_all_values()
-            
-            # If the sheet is completely empty
-            if not all_cells:
-                # Initialize the sheet with headers
-                sheet.update('A1', [self.columns])
-                self.bookings = pd.DataFrame(columns=self.columns)
-                return
-                
-            # If there are values, extract headers and data
-            headers = all_cells[0] if all_cells else []
-            
-            # Create empty dataframe if only headers exist
-            if len(all_cells) <= 1:
-                self.bookings = pd.DataFrame(columns=headers)
-                return
-                
-            # Extract data rows (skip header)
-            data = all_cells[1:]
-            
-            # Create DataFrame
-            self.bookings = pd.DataFrame(data, columns=headers)
-            
-        except Exception as e:
-            st.sidebar.error(f"Sheet data error: {str(e)}")
-            self.bookings = pd.DataFrame(columns=self.columns)
-            
-    except Exception as e:
-        st.error(f"Loading error: {str(e)}")
+        # Create empty dataframe in case loading fails
         self.bookings = pd.DataFrame(columns=self.columns)
+        try:
+            self._load_bookings_from_sheet()
+        except Exception as e:
+            st.error(f"Error initializing booking system: {str(e)}")
+            st.info("The app will continue with an empty booking system. Some features may be limited.")
+
+    def _load_bookings_from_sheet(self):
+        """Super simplified booking loading function with better error handling"""
+        try:
+            # Check if the sheet connection exists
+            if 'sheet' not in globals() or sheet is None:
+                st.warning("No connection to Google Sheets. Using local storage only.")
+                return
+                
+            # Get ALL cell values with explicit error handling
+            try:
+                all_cells = sheet.get_all_values()
+                
+                # If the sheet is completely empty
+                if not all_cells:
+                    # Initialize the sheet with headers
+                    try:
+                        sheet.update('A1', [self.columns])
+                    except Exception as sheet_write_error:
+                        st.warning(f"Could not initialize sheet headers: {str(sheet_write_error)}")
+                    return
+                    
+                # If there are values, extract headers and data
+                headers = all_cells[0] if all_cells else []
+                
+                # Create empty dataframe if only headers exist
+                if len(all_cells) <= 1:
+                    return
+                    
+                # Extract data rows (skip header)
+                data = all_cells[1:]
+                
+                # Create DataFrame
+                self.bookings = pd.DataFrame(data, columns=headers)
+                
+            except Exception as e:
+                st.warning(f"Could not read sheet data: {str(e)}")
+                
+        except Exception as e:
+            st.error(f"Booking system initialization error: {str(e)}")
 
     def _save_latest_booking_to_sheet(self):
         """Append the latest booking to Google Sheets with improved error handling"""
