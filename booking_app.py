@@ -101,27 +101,33 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=self.columns)
 
     def _save_latest_booking_to_sheet(self):
-        """Append the latest booking row to Google Sheets"""
+        """Append the latest booking row to Google Sheets with improved error handling"""
         try:
             if sheet is None:
                 st.error("Cannot save booking: No connection to Google Sheets")
                 return False
-                
+                    
             latest = self.bookings.iloc[-1]
             
-            # Convert any datetime objects to strings before saving
+            # Create a clean list of values to save
             row_to_save = []
             for col in self.columns:
                 val = latest.get(col, "")
-                # Handle any conversion needed
+                
+                # Convert values to strings to ensure they are JSON serializable
                 if pd.isna(val) or val is None:
                     val = ""
+                elif isinstance(val, (datetime, pd.Timestamp)):
+                    val = val.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    val = str(val)
+                    
                 row_to_save.append(val)
             
             # Append to the sheet
             sheet.append_row(row_to_save, value_input_option='USER_ENTERED')
             return True
-            
+                
         except Exception as e:
             st.error(f"Error saving booking to Google Sheets: {str(e)}")
             return False
