@@ -101,7 +101,7 @@ class StudyBookingSystem:
             self.bookings = pd.DataFrame(columns=self.columns)
 
     def _save_latest_booking_to_sheet(self):
-        """Append the latest booking row to Google Sheets with robust error handling"""
+        """Alternative approach using direct API calls"""
         try:
             if sheet is None:
                 st.error("Cannot save booking: No connection to Google Sheets")
@@ -114,31 +114,31 @@ class StudyBookingSystem:
                 
             latest = self.bookings.iloc[-1]
             
-            # Manually create a list of strings for each column
-            row_to_save = []
+            # Use a dictionary first for easier debugging
+            values_dict = {}
             for col in self.columns:
-                # Get the value, handle missing values
                 if col in latest:
                     val = latest[col]
-                    
-                    # Convert different types to strings
                     if pd.isna(val) or val is None:
-                        row_to_save.append("")
+                        values_dict[col] = ""
                     elif isinstance(val, (datetime, pd.Timestamp)):
-                        row_to_save.append(val.strftime('%Y-%m-%d %H:%M:%S'))
+                        values_dict[col] = val.strftime('%Y-%m-%d %H:%M:%S')
                     else:
-                        row_to_save.append(str(val))
+                        values_dict[col] = str(val)
                 else:
-                    row_to_save.append("")
+                    values_dict[col] = ""
             
-            # Debug info
-            st.sidebar.text(f"Saving row with {len(row_to_save)} values")
+            # Convert dictionary to list in correct order
+            row_to_save = [values_dict[col] for col in self.columns]
             
-            # Append to sheet directly with values parameter
-            # This avoids the JSON serialization issue
-            sheet.append_row(row_to_save, value_input_option='RAW')
+            # Append as a value range which is more reliable
+            values = [row_to_save]  # A list of rows (in this case, just one row)
+            sheet.values_append(
+                range_name='A1', 
+                params={'valueInputOption': 'RAW'},
+                body={'values': values}
+            )
             return True
-                
         except Exception as e:
             st.error(f"Error saving booking: {str(e)}")
             st.sidebar.error(f"Error details: {type(e).__name__}: {str(e)}")
