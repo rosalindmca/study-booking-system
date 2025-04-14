@@ -109,7 +109,7 @@ class StudyBookingSystem:
                     
             latest = self.bookings.iloc[-1]
             
-            # Create a clean list of values to save
+            # Create a clean list of values to saved
             row_to_save = []
             for col in self.columns:
                 val = latest.get(col, "")
