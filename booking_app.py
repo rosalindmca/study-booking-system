@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Display app info in the sidebarr
+# Display app info in the sidebar
 st.sidebar.title("DIPP Booking System")
 st.sidebar.caption("Version 1.0")
 
