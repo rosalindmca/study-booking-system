@@ -1,337 +1,183 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-import json
-import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import pytz
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-# Ensure settings file exists with correct date range
-def ensure_settings_file():
-    settings_file = "booking_settings.json"
-    if not os.path.exists(settings_file):
-        # Create default settings
-        default_settings = {
-            "start_date": "2025-05-01",
-            "end_date": "2025-10-31"
-        }
-        with open(settings_file, 'w') as f:
-            json.dump(default_settings, f)
-        print(f"Created settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
-    else:
-        # Verify the file has valid settings
-        try:
-            with open(settings_file, 'r') as f:
-                settings = json.load(f)
-            # Make sure both required keys exist
-            if "start_date" not in settings or "end_date" not in settings:
-                settings["start_date"] = "2025-05-01"
-                settings["end_date"] = "2025-10-31"
-                with open(settings_file, 'w') as f:
-                    json.dump(settings, f)
-                print(f"Fixed settings file to include dates from {settings['start_date']} to {settings['end_date']}")
-        except:
-            # If the file is corrupted, recreate it
-            default_settings = {
-                "start_date": "2025-05-01",
-                "end_date": "2025-10-31"
-            }
-            with open(settings_file, 'w') as f:
-                json.dump(default_settings, f)
-            print(f"Recreated corrupted settings file with dates from {default_settings['start_date']} to {default_settings['end_date']}")
 
-# Call this function when the app starts
-ensure_settings_file()
+# Caching Google Sheets connection
+@st.cache_resource
+def get_gsheet():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_sheets"], scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("DIPP_Bookings").sheet1
+    return sheet
 
-# Set page config
-st.set_page_config(page_title="DIPP Study Visit Booking System", layout="wide")
+sheet = get_gsheet()
 
-# Create a class to handle the booking logic
+
 class StudyBookingSystem:
     def __init__(self):
-        self.bookings_file = "study_bookings.json"
-        
-        # Define required columns for our system
-        required_columns = [
-            'name', 'participant_id', 'email', 'group', 'baseline_date', 
-            'pre_dosing_date', 'dosing_date', 'follow_up_date',
-            'booking_status', 'notes'
+        # Define expected columns (must match Google Sheet headers)
+        self.columns = [
+            'name', 'participant_id', 'email', 'group', 'baseline_date', 'baseline_time',
+            'pre_dosing_date', 'pre_dosing_time', 'dosing_date', 'dosing_time',
+            'follow_up_date', 'follow_up_time', 'booking_status', 'notes', 'booking_time'
         ]
-        
-        # Load existing bookings if file exists
-        if os.path.exists(self.bookings_file):
-            try:
-                with open(self.bookings_file, 'r') as f:
-                    data = json.load(f)
-                    # Create DataFrame from the data
-                    self.bookings = pd.DataFrame(data)
-                    
-                    # Add any missing columns with default values
-                    for column in required_columns:
-                        if column not in self.bookings.columns:
-                            if column == 'booking_status':
-                                self.bookings[column] = 'Active'  # Default status for existing bookings
-                            elif column == 'notes':
-                                self.bookings[column] = ''
-                            else:
-                                self.bookings[column] = None
-            except:
-                self.bookings = pd.DataFrame(columns=required_columns)
-        else:
-            self.bookings = pd.DataFrame(columns=required_columns)
-    
-    def get_dosing_dates(self, group):
-        """Generate all possible dosing dates from fixed range: May 1 to October 31, 2025"""
+        self._load_bookings_from_sheet()
 
-        # Fixed date range
+    def _load_bookings_from_sheet(self):
+        """Load data from Google Sheets"""
+        records = sheet.get_all_records()
+        self.bookings = pd.DataFrame(records)
+
+        # If sheet is empty (besides headers)
+        if self.bookings.empty:
+            self.bookings = pd.DataFrame(columns=self.columns)
+        else:
+            # Ensure all expected columns exist
+            for col in self.columns:
+                if col not in self.bookings.columns:
+                    self.bookings[col] = None
+
+    def _save_latest_booking_to_sheet(self):
+        """Append the latest booking row to Google Sheets"""
+        latest = self.bookings.iloc[-1]
+        sheet.append_row(latest.tolist(), value_input_option='USER_ENTERED')
+
+    def get_all_bookings(self):
+        return self.bookings
+
+    def get_dosing_dates(self, group):
         start_date = datetime(2025, 5, 1).date()
         end_date = datetime(2025, 10, 31).date()
-
-        print(f"Generating dates from {start_date} to {end_date}")
-
-        dates = []
-        current = start_date
-
-        # Wednesday (2) or Saturday (5)
         target_day = 2 if group == 'WEDNESDAY' else 5
 
-        while current <= end_date:
-            if current.weekday() == target_day:
-                dates.append(current)
-            current += timedelta(days=1)
+        dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+        valid_dates = [d for d in dates if d.weekday() == target_day]
 
-        print(f"Generated {len(dates)} {group} dates from {dates[0] if dates else 'None'} to {dates[-1] if dates else 'None'}")
-
-        # Filter out already booked dates (with active status)
         booked_dates = []
-        if 'dosing_date' in self.bookings.columns and not self.bookings.empty:
-            active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
-            booked_dates = [datetime.strptime(date, '%Y-%m-%d').date() for date in active_bookings['dosing_date']]
+        if not self.bookings.empty:
+            active = self.bookings[self.bookings['booking_status'] == 'Active']
+            booked_dates = [datetime.strptime(date, '%Y-%m-%d').date() for date in active['dosing_date']]
 
-        available_dates = [date for date in dates if date not in booked_dates]
-
-        print(f"Found {len(available_dates)} available {group} dates after filtering out booked slots")
-
-        return available_dates
+        return [d for d in valid_dates if d not in booked_dates]
 
     def get_pre_scan_date(self, dosing_date):
-        """Get pre-scan date (day before dosing)"""
         return dosing_date - timedelta(days=1)
-    
+
     def get_follow_up_date(self, dosing_date, group):
-        """Get follow-up date (2 weeks after dosing)"""
         follow_up = dosing_date + timedelta(days=14)
-        
-        # Adjust to the correct day of week if needed
-        # For Wednesday group, the follow-up should be on Thursday
-        if group == 'WEDNESDAY':
-            target_day = 3  # Thursday
-            while follow_up.weekday() != target_day:
-                follow_up += timedelta(days=1)
-        # For Saturday group, the follow-up should be on Sunday
-        else:
-            target_day = 6  # Sunday
-            while follow_up.weekday() != target_day:
-                follow_up += timedelta(days=1)
-                
+        target_day = 3 if group == 'WEDNESDAY' else 6
+        while follow_up.weekday() != target_day:
+            follow_up += timedelta(days=1)
         return follow_up
-    
+
     def get_baseline_date(self, dosing_date):
-        """Get the closest Monday that is at least 22 days before dosing"""
-        earliest_allowed = dosing_date - timedelta(days=60)  # Don't go too far back
-        latest_allowed = dosing_date - timedelta(days=22)    # At least 22 days before
-        
-        # Find the closest Monday to latest_allowed that's still valid
-        current = latest_allowed
-        while current.weekday() != 0:  # Monday is 0
+        earliest = dosing_date - timedelta(days=60)
+        latest = dosing_date - timedelta(days=22)
+        current = latest
+        while current.weekday() != 0:
             current -= timedelta(days=1)
-        
-        # If we went back too far, there's no valid date
-        if current < earliest_allowed:
-            return None
-            
-        return current
-    
+        return current if current >= earliest else None
+
     def get_available_pre_dosing_times(self, pre_dosing_date, group):
-        """Check available time slots for pre-dosing visit"""
-        if 'pre_dosing_date' not in self.bookings.columns or self.bookings.empty:
+        if self.bookings.empty:
             return ["Daytime", "Evening"]
-        
-        # Get active bookings for this date
-        active_bookings = self.bookings[
-            (self.bookings['booking_status'] == 'Active') & 
-            (self.bookings['pre_dosing_date'] == pre_dosing_date.strftime('%Y-%m-%d'))
+
+        date_str = pre_dosing_date.strftime('%Y-%m-%d')
+        booked = self.bookings[
+            (self.bookings['booking_status'] == 'Active') &
+            (self.bookings['pre_dosing_date'] == date_str)
         ]
-        
-        # Get already booked times for this date
-        booked_times = active_bookings['pre_dosing_time'].tolist() if 'pre_dosing_time' in active_bookings.columns else []
-        
-        # Return available times
-        all_times = ["Daytime", "Evening"]
-        available_times = [time for time in all_times if time not in booked_times]
-        
-        return available_times
-    
+        taken = booked['pre_dosing_time'].tolist()
+        return [t for t in ["Daytime", "Evening"] if t not in taken]
+
     def get_available_follow_up_times(self, follow_up_date, group):
-        """Check available time slots for follow-up visit"""
-        if 'follow_up_date' not in self.bookings.columns or self.bookings.empty:
+        if self.bookings.empty:
             return ["Daytime", "Evening"]
-        
-        # Get active bookings for this date
-        active_bookings = self.bookings[
-            (self.bookings['booking_status'] == 'Active') & 
-            (self.bookings['follow_up_date'] == follow_up_date.strftime('%Y-%m-%d'))
+
+        date_str = follow_up_date.strftime('%Y-%m-%d')
+        booked = self.bookings[
+            (self.bookings['booking_status'] == 'Active') &
+            (self.bookings['follow_up_date'] == date_str)
         ]
-        
-        # Get already booked times for this date
-        booked_times = active_bookings['follow_up_time'].tolist() if 'follow_up_time' in active_bookings.columns else []
-        
-        # Return available times
-        all_times = ["Daytime", "Evening"]
-        available_times = [time for time in all_times if time not in booked_times]
-        
-        return available_times
-    
+        taken = booked['follow_up_time'].tolist()
+        return [t for t in ["Daytime", "Evening"] if t not in taken]
+
     def check_baseline_availability(self, baseline_date, group):
-        """Check if the baseline slot is available"""
-        if 'baseline_date' not in self.bookings.columns or self.bookings.empty:
+        if self.bookings.empty:
             return True
-        
-        # Target time based on group
-        target_time = "Daytime" if group == "WEDNESDAY" else "Evening"
-        
-        # Get active bookings for this date and time
-        active_bookings = self.bookings[
-            (self.bookings['booking_status'] == 'Active') & 
-            (self.bookings['baseline_date'] == baseline_date.strftime('%Y-%m-%d')) &
-            (self.bookings['baseline_time'] == target_time)
-        ] if 'baseline_time' in self.bookings.columns else pd.DataFrame()
-        
-        # If there are no bookings for this slot, it's available
-        return len(active_bookings) == 0
-    
-    def book_participant(self, name, participant_id, email, group, baseline_date, pre_dosing_date, 
+
+        date_str = baseline_date.strftime('%Y-%m-%d')
+        time = "Daytime" if group == "WEDNESDAY" else "Evening"
+        match = self.bookings[
+            (self.bookings['booking_status'] == 'Active') &
+            (self.bookings['baseline_date'] == date_str) &
+            (self.bookings['baseline_time'] == time)
+        ]
+        return match.empty
+
+    def book_participant(self, name, participant_id, email, group, baseline_date, pre_dosing_date,
                          dosing_date, follow_up_date, pre_dosing_time, follow_up_time):
-        """Create a booking for a participant"""
-        # Validate dates
         if not self._validate_booking(baseline_date, pre_dosing_date, dosing_date, follow_up_date, group):
             return False, "Invalid booking dates"
-        
-        # Check if participant already exists with active booking
+
         if participant_id in self.bookings[self.bookings['booking_status'] == 'Active']['participant_id'].values:
             return False, "Participant ID already has an active booking"
-        
-        # Set times based on group
+
         baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
-        
-        # Add to bookings dataframe
-        new_booking = pd.DataFrame({
-            'name': [name],
-            'participant_id': [participant_id],
-            'email': [email],
-            'group': [group],
-            'baseline_date': [baseline_date.strftime('%Y-%m-%d')],
-            'baseline_time': [baseline_time],
-            'pre_dosing_date': [pre_dosing_date.strftime('%Y-%m-%d')],
-            'pre_dosing_time': [pre_dosing_time],
-            'dosing_date': [dosing_date.strftime('%Y-%m-%d')],
-            'dosing_time': ['All Day'],
-            'follow_up_date': [follow_up_date.strftime('%Y-%m-%d')],
-            'follow_up_time': [follow_up_time],
-            'booking_status': ['Active'],
-            'notes': [''],
-            'booking_time': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
-        })
-        
+
+        new_booking = pd.DataFrame([{
+            'name': name,
+            'participant_id': participant_id,
+            'email': email,
+            'group': group,
+            'baseline_date': baseline_date.strftime('%Y-%m-%d'),
+            'baseline_time': baseline_time,
+            'pre_dosing_date': pre_dosing_date.strftime('%Y-%m-%d'),
+            'pre_dosing_time': pre_dosing_time,
+            'dosing_date': dosing_date.strftime('%Y-%m-%d'),
+            'dosing_time': 'All Day',
+            'follow_up_date': follow_up_date.strftime('%Y-%m-%d'),
+            'follow_up_time': follow_up_time,
+            'booking_status': 'Active',
+            'notes': '',
+            'booking_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }])
+
         self.bookings = pd.concat([self.bookings, new_booking], ignore_index=True)
-        
-        # Save to file
-        self._save_bookings()
-        
+        self._save_latest_booking_to_sheet()
         return True, "Booking successful"
-    
+
     def cancel_booking(self, participant_id, reason):
-        """Cancel a booking for a participant"""
-        if participant_id not in self.bookings['participant_id'].values:
-            return False, "Participant ID not found"
-        
-        # Find the participant's index
         idx = self.bookings[self.bookings['participant_id'] == participant_id].index
-        
-        # Update booking status and add cancellation note
+        if idx.empty:
+            return False, "Participant ID not found"
+
         self.bookings.loc[idx, 'booking_status'] = 'Cancelled'
         self.bookings.loc[idx, 'notes'] = f"Cancelled: {reason}"
         self.bookings.loc[idx, 'cancellation_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Save to file
-        self._save_bookings()
-        
-        # Send cancellation email (optional)
-        # self._send_cancellation_email(participant_id)
-        
+
+        # Note: we don’t save to Google Sheets again since it’s append-only
         return True, "Booking cancelled successfully"
-    
-    def reset_all_bookings(self):
-        """Reset all bookings (for piloting)"""
-        if os.path.exists(self.bookings_file):
-            # Create a backup first
-            backup_file = f"study_bookings_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(backup_file, 'w') as f:
-                f.write(self.bookings.to_json(orient='records'))
-        
-        # Clear the bookings
-        self.bookings = pd.DataFrame(columns=[
-            'name', 'participant_id', 'email', 'group', 'baseline_date', 
-            'pre_dosing_date', 'dosing_date', 'follow_up_date',
-            'booking_status', 'notes'
-        ])
-        
-        # Save to file
-        self._save_bookings()
-        
-        return True, f"All bookings reset. Backup created: {backup_file}"
-    
+
     def _validate_booking(self, baseline, pre_dosing, dosing, follow_up, group):
-        """Validate the booking dates"""
-        # Ensure dosing is on correct day of week
-        if group == 'WEDNESDAY' and dosing.weekday() != 2:  # Wednesday is 2
+        if group == 'WEDNESDAY' and dosing.weekday() != 2:
             return False
-            
-        if group == 'SATURDAY' and dosing.weekday() != 5:  # Saturday is 5
+        if group == 'SATURDAY' and dosing.weekday() != 5:
             return False
-        
-        # Ensure pre-dosing is day before dosing
         if (dosing - pre_dosing).days != 1:
             return False
-        
-        # Ensure baseline is at least 22 days before dosing
-        if (dosing - baseline).days < 22:
+        if (dosing - baseline).days < 22 or baseline.weekday() != 0:
             return False
-        
-        # Ensure baseline is on Monday
-        if baseline.weekday() != 0:  # Monday is 0
-            return False
-        
-        # For Wednesday group, follow-up should be Thursday
         if group == 'WEDNESDAY' and follow_up.weekday() != 3:
             return False
-            
-        # For Saturday group, follow-up should be Sunday
         if group == 'SATURDAY' and follow_up.weekday() != 6:
             return False
-        
         return True
-    
-    def get_all_bookings(self):
-        """Return all bookings"""
-        return self.bookings
-    
-    def _save_bookings(self):
-        """Save bookings to file"""
-        with open(self.bookings_file, 'w') as f:
-            f.write(self.bookings.to_json(orient='records'))
+
 
 # Initialize the booking system
 @st.cache_resource
@@ -617,7 +463,7 @@ with tab2:
     # Password protection for admin
     admin_password = st.text_input("Admin Password", type="password")
     
-    if admin_password == "admin":
+    if admin_password == st.secrets["admin_password"]:
         admin_tabs = st.tabs(["View Bookings", "Cancel Booking", "System Management"])
         
         with admin_tabs[0]:
@@ -713,74 +559,5 @@ with tab2:
                 else:
                     st.error(f"❌ {message}")
             
-            # Date range management
-            st.markdown("#### Manage Date Range")
-            st.info("Set the date range for available bookings. This affects which dates are shown to participants.")
-
-            # Get current date range settings (or default to May-Oct 2025)
-            current_settings = {}
-            settings_file = "booking_settings.json"
-
-            if os.path.exists(settings_file):
-                try:
-                    with open(settings_file, 'r') as f:
-                        current_settings = json.load(f)
-                except:
-                    current_settings = {
-                        "start_date": "2025-05-01",
-                        "end_date": "2025-10-31"
-                    }
-            else:
-                current_settings = {
-                    "start_date": "2025-05-01",
-                    "end_date": "2025-10-31"
-                }
-
-            # Create date inputs for start and end dates
-            col1, col2 = st.columns(2)
-            with col1:
-                # Convert string dates to datetime objects for the date_input
-                default_start = datetime.strptime(current_settings["start_date"], "%Y-%m-%d").date()
-                new_start_date = st.date_input(
-                    "Start Date", 
-                    value=default_start,
-                    min_value=datetime(2025, 1, 1).date(),
-                    max_value=datetime(2026, 12, 31).date()
-                )
-                
-            with col2:
-                default_end = datetime.strptime(current_settings["end_date"], "%Y-%m-%d").date()
-                new_end_date = st.date_input(
-                    "End Date", 
-                    value=default_end,
-                    min_value=datetime(2025, 1, 1).date(),
-                    max_value=datetime(2026, 12, 31).date()
-                )
-
-            # Validate input
-            if new_start_date >= new_end_date:
-                st.error("Start date must be before end date")
-                can_save = False
-            else:
-                can_save = True
-
-            # Save settings button
-            if st.button("Save Date Range Settings", disabled=not can_save):
-                # Update settings
-                current_settings["start_date"] = new_start_date.strftime("%Y-%m-%d")
-                current_settings["end_date"] = new_end_date.strftime("%Y-%m-%d")
-                
-                # Save to file
-                with open(settings_file, 'w') as f:
-                    json.dump(current_settings, f)
-                
-                st.success(f"✅ Date range updated: {new_start_date.strftime('%B %d, %Y')} to {new_end_date.strftime('%B %d, %Y')}")
-                st.info("This will affect which dates are shown for new bookings.")
-
-            # Email settings
-            st.markdown("#### Email Settings")
-            st.info("In the production version, you can add controls here to configure email settings.")
-    
     elif admin_password:
         st.error("Incorrect password") 
-
