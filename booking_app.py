@@ -8,6 +8,17 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pytz
 
+# Add the backup system here
+# Ensure we have a backup copy each time the app starts
+if os.path.exists("study_bookings.json"):
+    backup_path = f"study_bookings_backup_startup.json"
+    try:
+        import shutil
+        shutil.copy("study_bookings.json", backup_path)
+        print(f"Created startup backup of bookings")
+    except Exception as e:
+        print(f"Failed to create startup backup: {e}")
+
 # Always set settings file to May-Oct 2025
 def ensure_settings_file():
     settings_file = "booking_settings.json"
@@ -311,9 +322,23 @@ class StudyBookingSystem:
         return self.bookings
     
     def _save_bookings(self):
-        """Save bookings to file"""
-        with open(self.bookings_file, 'w') as f:
-            f.write(self.bookings.to_json(orient='records'))
+        """Save bookings to file with error confirmation"""
+        try:
+            # Create a backup first
+            backup_file = f"study_bookings_backup_latest.json"
+            with open(backup_file, 'w') as f:
+                f.write(self.bookings.to_json(orient='records'))
+                
+            # Then save the main file
+            with open(self.bookings_file, 'w') as f:
+                f.write(self.bookings.to_json(orient='records'))
+            
+            print(f"Successfully saved bookings to {os.path.abspath(self.bookings_file)}")
+            return True
+        except Exception as e:
+            print(f"ERROR SAVING BOOKING: {e}")
+            st.error(f"Error saving booking: {e}. Please contact the administrator.")
+            return False
 
 # Initialize the booking system
 @st.cache_resource
@@ -509,8 +534,11 @@ with tab1:
                         pre_dosing_time, follow_up_time
                     )
                     
-                    if success:
-                        st.success("✅ Booking Confirmed!")
+                    # Check that file was saved successfully
+                    file_saved = os.path.exists("study_bookings.json")
+                    
+                    if success and file_saved:
+                        st.success("✅ Booking Confirmed! Your booking has been saved to our system.")
                         
                         st.markdown(f"**Name:** {name}")
                         st.markdown(f"**Participant ID:** {participant_id}")
@@ -589,7 +617,10 @@ with tab1:
                         ))
                         
                     else:
-                        st.error(f"❌ Booking Failed: {message}")
+                        error_message = message
+                        if not file_saved:
+                            error_message = "System could not save your booking. Please take a screenshot and contact us."
+                        st.error(f"❌ Booking Issue: {error_message}")
     else:
         st.info("Please enter your name, participant ID, and email address to continue.")
 
