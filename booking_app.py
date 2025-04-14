@@ -91,45 +91,45 @@ class StudyBookingSystem:
         ]
         self._load_bookings_from_sheet()
 
-    def _load_bookings_from_sheet(self):
-        """Super simplified booking loading function"""
+def _load_bookings_from_sheet(self):
+    """Super simplified booking loading function"""
+    try:
+        if sheet is None:
+            self.bookings = pd.DataFrame(columns=self.columns)
+            return
+            
         try:
-            if sheet is None:
+            # Get ALL cell values
+            all_cells = sheet.get_all_values()
+            
+            # If the sheet is completely empty
+            if not all_cells:
+                # Initialize the sheet with headers
+                sheet.update('A1', [self.columns])
                 self.bookings = pd.DataFrame(columns=self.columns)
                 return
                 
-            try:
-                # Get ALL cell values
-                all_cells = sheet.get_all_values()
+            # If there are values, extract headers and data
+            headers = all_cells[0] if all_cells else []
+            
+            # Create empty dataframe if only headers exist
+            if len(all_cells) <= 1:
+                self.bookings = pd.DataFrame(columns=headers)
+                return
                 
-                # If the sheet is completely empty
-                if not all_cells:
-                    # Initialize the sheet with headers
-                    sheet.update('A1', [self.columns])
-                    self.bookings = pd.DataFrame(columns=self.columns)
-                    return
-                    
-                # If there are values, extract headers and data
-                headers = all_cells[0] if all_cells else []
-                
-                # Create empty dataframe if only headers exist
-                if len(all_cells) <= 1:
-                    self.bookings = pd.DataFrame(columns=headers)
-                    return
-                    
-                # Extract data rows (skip header)
-                data = all_cells[1:]
-                
-                # Create DataFrame
-                self.bookings = pd.DataFrame(data, columns=headers)
-                
-            except Exception as e:
-                st.sidebar.error(f"Sheet data error: {str(e)}")
-                self.bookings = pd.DataFrame(columns=self.columns)
-                
+            # Extract data rows (skip header)
+            data = all_cells[1:]
+            
+            # Create DataFrame
+            self.bookings = pd.DataFrame(data, columns=headers)
+            
         except Exception as e:
-            st.error(f"Loading error: {str(e)}")
+            st.sidebar.error(f"Sheet data error: {str(e)}")
             self.bookings = pd.DataFrame(columns=self.columns)
+            
+    except Exception as e:
+        st.error(f"Loading error: {str(e)}")
+        self.bookings = pd.DataFrame(columns=self.columns)
 
     def _save_latest_booking_to_sheet(self):
         """Append the latest booking to Google Sheets with improved error handling"""
@@ -263,7 +263,7 @@ class StudyBookingSystem:
         return match.empty
 
     def book_participant(self, name, participant_id, email, group, baseline_date, pre_dosing_date,
-                         dosing_date, follow_up_date, pre_dosing_time, follow_up_time):
+                        dosing_date, follow_up_date, pre_dosing_time, follow_up_time):
         """Book a participant for all four visits"""
         # Validate the booking dates
         if not self._validate_booking(baseline_date, pre_dosing_date, dosing_date, follow_up_date, group):
@@ -278,26 +278,31 @@ class StudyBookingSystem:
         # Set baseline time based on group
         baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
 
-        # Create new booking record
-        new_booking = pd.DataFrame([{
-            'name': name,
-            'participant_id': participant_id,
-            'email': email,
-            'group': group,
-            'baseline_date': baseline_date.strftime('%Y-%m-%d'),
-            'baseline_time': baseline_time,
-            'pre_dosing_date': pre_dosing_date.strftime('%Y-%m-%d'),
-            'pre_dosing_time': pre_dosing_time,
-            'dosing_date': dosing_date.strftime('%Y-%m-%d'),
-            'dosing_time': 'All Day',
-            'follow_up_date': follow_up_date.strftime('%Y-%m-%d'),
-            'follow_up_time': follow_up_time,
-            'booking_status': 'Active',
-            'notes': '',
-            'booking_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'cancellation_time': ''
-        }])
+        # Create new booking record - FIXED VERSION
+        new_booking = pd.DataFrame({
+            'name': [name],
+            'participant_id': [participant_id],
+            'email': [email],
+            'group': [group],
+            'baseline_date': [baseline_date.strftime('%Y-%m-%d')],
+            'baseline_time': [baseline_time],
+            'pre_dosing_date': [pre_dosing_date.strftime('%Y-%m-%d')],
+            'pre_dosing_time': [pre_dosing_time],
+            'dosing_date': [dosing_date.strftime('%Y-%m-%d')],
+            'dosing_time': ['All Day'],
+            'follow_up_date': [follow_up_date.strftime('%Y-%m-%d')],
+            'follow_up_time': [follow_up_time],
+            'booking_status': ['Active'],
+            'notes': [''],
+            'booking_time': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+            'cancellation_time': ['']
+        })
 
+        # Reset indexes to ensure they're unique before concatenation
+        if not self.bookings.empty:
+            self.bookings = self.bookings.reset_index(drop=True)
+        new_booking = new_booking.reset_index(drop=True)
+        
         # Add to in-memory dataframe
         self.bookings = pd.concat([self.bookings, new_booking], ignore_index=True)
         
