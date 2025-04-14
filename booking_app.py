@@ -92,42 +92,43 @@ class StudyBookingSystem:
         self._load_bookings_from_sheet()
 
     def _load_bookings_from_sheet(self):
-        """Load data from Google Sheets with improved error handling for empty sheets"""
+        """Super simplified booking loading function"""
         try:
             if sheet is None:
                 self.bookings = pd.DataFrame(columns=self.columns)
                 return
-            
-            # Check if the sheet has headers
-            headers = sheet.row_values(1)
-            
-            # If no headers, initialize them
-            if not headers:
-                sheet.append_row(self.columns)
-                st.sidebar.info("Initialized sheet with headers")
-                self.bookings = pd.DataFrame(columns=self.columns)
-                return
                 
-            # Otherwise, get all records
             try:
-                records = sheet.get_all_records()
-                self.bookings = pd.DataFrame(records)
+                # Get ALL cell values
+                all_cells = sheet.get_all_values()
+                
+                # If the sheet is completely empty
+                if not all_cells:
+                    # Initialize the sheet with headers
+                    sheet.update('A1', [self.columns])
+                    self.bookings = pd.DataFrame(columns=self.columns)
+                    return
+                    
+                # If there are values, extract headers and data
+                headers = all_cells[0] if all_cells else []
+                
+                # Create empty dataframe if only headers exist
+                if len(all_cells) <= 1:
+                    self.bookings = pd.DataFrame(columns=headers)
+                    return
+                    
+                # Extract data rows (skip header)
+                data = all_cells[1:]
+                
+                # Create DataFrame
+                self.bookings = pd.DataFrame(data, columns=headers)
+                
             except Exception as e:
-                st.error(f"Error getting records: {str(e)}")
+                st.sidebar.error(f"Sheet data error: {str(e)}")
                 self.bookings = pd.DataFrame(columns=self.columns)
-                return
-
-            # If sheet is empty (besides headers)
-            if self.bookings.empty:
-                self.bookings = pd.DataFrame(columns=self.columns)
-            else:
-                # Ensure all expected columns exist
-                for col in self.columns:
-                    if col not in self.bookings.columns:
-                        self.bookings[col] = None
-                        
+                
         except Exception as e:
-            st.error(f"Error loading bookings from Google Sheets: {str(e)}")
+            st.error(f"Loading error: {str(e)}")
             self.bookings = pd.DataFrame(columns=self.columns)
 
     def _save_latest_booking_to_sheet(self):
