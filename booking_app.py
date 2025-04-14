@@ -480,16 +480,16 @@ st.markdown("""
 The DIPP study requires participants to attend four separate visits:
 
 1. **Baseline Visit (Visit 1)**: About 3 weeks before your dosing day, you'll come in for your first baseline visit to do surveys and computer tasks (about 3 hours).
-   **Location: 26 Bedford Way, London**
+   **Location: 26 Bedford Way, London, WC1H 0AP**
 
 2. **Pre-dosing Visit (Visit 2)**: One day before your dosing, you'll need to come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
-   **Location: 26 Bedford Way, London**
+   **Location: 26 Bedford Way, London, WC1H 0AP**
 
 3. **Dosing Day (Visit 3)**: This is the main visit where you'll spend all day at the center. You can choose either a Wednesday or Saturday.
-   **Location: 1-19 Torrington Place, London**
+   **Location: 1-19 Torrington Place, London, WC1E 7HB**
 
 4. **Follow-up Visit (Visit 4)**: About 2 weeks after your dosing day, you'll come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
-   **Location: 26 Bedford Way, London**
+   **Location: 26 Bedford Way, London, WC1H 0AP**
 
 **Important**: Between Visit 1 and Visit 2, you'll complete the 21-day preparation programme using our web app. This includes daily morning practices, weekly activities, and submitting a brief voice note twice a day (we'll guide you through the whole process).
 
@@ -579,7 +579,7 @@ with tab1:
                     baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
                     st.markdown(f"**Time**: {baseline_time}")
                 with col3:
-                    st.markdown("**Location**: 26 Bedford Way")
+                    st.markdown("**Location**: 26 Bedford Way, WC1H 0AP")
                 
                 if not baseline_available:
                     st.warning(f"⚠️ This baseline slot is already booked. Please select a different dosing date.")
@@ -601,7 +601,7 @@ with tab1:
                             key="pre_dosing_time"
                         )
                 with col3:
-                    st.markdown("**Location**: 26 Bedford Way")
+                    st.markdown("**Location**: 26 Bedford Way, WC1H 0AP")
                 
                 # Visit 3: Dosing Day
                 st.markdown("#### Visit 3: Dosing Day")
@@ -611,7 +611,7 @@ with tab1:
                 with col2:
                     st.markdown("**Time**: All Day")
                 with col3:
-                    st.markdown("**Location**: 1-19 Torrington Place")
+                    st.markdown("**Location**: 1-19 Torrington Place, WC1E 7HB")
                 
                 # Visit 4: Follow-up
                 st.markdown("#### Visit 4: Follow-up")
@@ -630,7 +630,7 @@ with tab1:
                             key="follow_up_time"
                         )
                 with col3:
-                    st.markdown("**Location**: 26 Bedford Way")
+                    st.markdown("**Location**: 26 Bedford Way, WC1H 0AP")
                 
                 # Step 5: Submit booking
                 st.subheader("Step 5: Confirm Booking")
@@ -688,10 +688,10 @@ with tab1:
                             st.markdown(f"{follow_up_time}")
                         with col4:
                             st.markdown("**Location**")
-                            st.markdown("26 Bedford Way")
-                            st.markdown("26 Bedford Way")
-                            st.markdown("1-19 Torrington Place")
-                            st.markdown("26 Bedford Way")
+                            st.markdown("26 Bedford Way, WC1H 0AP")
+                            st.markdown("26 Bedford Way, WC1H 0AP")
+                            st.markdown("1-19 Torrington Place, WC1E 7HB")
+                            st.markdown("26 Bedford Way, WC1H 0AP")
                         
                         # Add manual planner reminder message
                         st.markdown("---")
@@ -706,22 +706,22 @@ with tab1:
                         **Visit 1 (Baseline)**  
                         Date: {baseline_date}  
                         Time: {baseline_time}  
-                        Location: 26 Bedford Way, London
+                        Location: 26 Bedford Way, London, WC1H 0AP
                         
                         **Visit 2 (Pre-dosing)**  
                         Date: {pre_dosing_date}  
                         Time: {pre_dosing_time}  
-                        Location: 26 Bedford Way, London
+                        Location: 26 Bedford Way, London, WC1H 0AP
                         
                         **Visit 3 (Dosing Day)**  
                         Date: {dosing_date}  
                         Time: All Day  
-                        Location: 1-19 Torrington Place, London
+                        Location: 1-19 Torrington Place, London, WC1E 7HB
                         
                         **Visit 4 (Follow-up)**  
                         Date: {follow_up_date}  
                         Time: {follow_up_time}  
-                        Location: 26 Bedford Way, London
+                        Location: 26 Bedford Way, London, WC1H 0AP
                         
                         **Note**: The DIPP research team will contact you to confirm the exact time within these blocks.
                         """.format(
