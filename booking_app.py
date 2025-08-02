@@ -211,7 +211,7 @@ class StudyBookingSystem:
     def get_dosing_dates(self, group):
         """Get available dosing dates for the selected group"""
         start_date = datetime(2025, 5, 1).date()
-        end_date = datetime(2025, 10, 31).date()
+        end_date = datetime(2025, 11, 29).date()
         target_day = 2 if group == 'WEDNESDAY' else 5  # 2=Wednesday, 5=Saturday
 
         # Generate all possible dates in the range
