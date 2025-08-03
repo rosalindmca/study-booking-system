@@ -187,7 +187,7 @@ st.title("DIPP Study Participant Booking System")
 st.markdown("""
 ### How Your Study Visits Are Scheduled
 The DIPP study involves four visits, and all dates are automatically calculated based on the **Dosing Day (Visit 3)** you select. Here's how it works:
-- **Visit 3 (Dosing Day):** This is the main, all-day visit at **1-19 Torrington Place, WC1E 7HB**. You will arrive at **10:00** and be collected by your designated person at **17:00**. This is the key date you will choose below.
+- **Visit 3 (Dosing Day):** This is the main, all-day visit at **1-19 Torrington Place, WC1E 7HB**. You will arrive at **10:00** and be collected by your designated person at about **17:00**. This is the key date you will choose below.
 
 - **Visit 2 (Pre-dosing Visit):** This 5-hour session takes place the day *before* your Dosing Day.
 - **Visit 1 (Baseline Visit):** This 3-hour session takes place on a Monday *at least three weeks before* your Dosing Day.
@@ -243,7 +243,7 @@ with tab1:
             st.info(f"**Your automatically generated visit dates:**\n\n"
                     f"- **V1 (Baseline (approx. 3 hours)):** `{baseline_date.strftime('%A, %d %b %Y')}`\n\n"
                     f"- **V2 (Pre-dosing (approx. 5 hours)):** `{pre_dosing_date.strftime('%A, %d %b %Y')}`\n\n"
-                    f"- **V3 (Dosing Day (10:00 - 17:30)):** `{dosing_date.strftime('%A, %d %b %Y')}`\n\n"
+                    f"- **V3 (Dosing Day (10:00 - 17:00)):** `{dosing_date.strftime('%A, %d %b %Y')}`\n\n"
                     f"- **V4 (Follow-up (approx. 5 hours)):** `{follow_up_date.strftime('%A, %d %b %Y')}`")
 
             st.subheader("Step 3: Choose Start Times for Your Visits")
