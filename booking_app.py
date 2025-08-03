@@ -308,4 +308,3 @@ with tab2:
 
     elif password:
         st.error("Incorrect password. Access denied.", icon="🔒")
-```
