@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -51,7 +51,7 @@ st.set_page_config(
 
 # Display app info in the sidebarr
 st.sidebar.title("DIPP Booking System")
-st.sidebar.caption("Version 1.0")
+st.sidebar.caption("Version 1.1") # <<< CHANGED Version
 
 # Caching Google Sheets connection to avoid reconnecting on each rerun
 @st.cache_resource
@@ -60,7 +60,7 @@ def get_gsheet():
     try:
         # Define the scope for Google Sheets API
         scope = ["https://spreadsheets.google.com/feeds", 
-                "https://www.googleapis.com/auth/drive"]
+                 "https://www.googleapis.com/auth/drive"]
         
         # Check if Google Sheets credentials exist in secrets
         if "google_sheets" not in st.secrets:
@@ -258,31 +258,66 @@ class StudyBookingSystem:
             
         return current if current >= earliest else None
 
-    def get_available_pre_dosing_times(self, pre_dosing_date, group):
-        """Get available time slots for pre-dosing visit"""
+    # <<< CHANGED: New function to get specific time slots
+    def get_available_time_slots(self, visit_date, visit_date_col, visit_time_col):
+        """
+        Get available 5-hour time slots for a given visit date, checking for overlaps.
+        """
+        # Define parameters for scheduling
+        slot_duration = timedelta(hours=5)
+        day_start_time = time(9, 0)   # 9:00 AM
+        day_end_time = time(22, 0)  # 10:00 PM (session must end by this time)
+        increment = timedelta(minutes=30)
+        
+        # Generate all possible start times for the day
+        potential_slots = []
+        current_time = datetime.combine(visit_date, day_start_time)
+        latest_start_time = datetime.combine(visit_date, day_end_time) - slot_duration
+        
+        while current_time <= latest_start_time:
+            potential_slots.append(current_time)
+            current_time += increment
+
         if self.bookings.empty:
-            return ["Daytime", "Evening"]
+            return [t.strftime("%H:%M") for t in potential_slots]
 
-        date_str = pre_dosing_date.strftime('%Y-%m-%d')
-        booked = self.bookings[
+        # Get existing bookings for the specified date
+        date_str = visit_date.strftime('%Y-%m-%d')
+        active_bookings = self.bookings[
             (self.bookings['booking_status'] == 'Active') &
-            (self.bookings['pre_dosing_date'] == date_str)
+            (self.bookings[visit_date_col] == date_str)
         ]
-        taken = booked['pre_dosing_time'].tolist() if not booked.empty else []
-        return [t for t in ["Daytime", "Evening"] if t not in taken]
 
-    def get_available_follow_up_times(self, follow_up_date, group):
-        """Get available time slots for follow-up visit"""
-        if self.bookings.empty:
-            return ["Daytime", "Evening"]
+        if active_bookings.empty:
+            return [t.strftime("%H:%M") for t in potential_slots]
 
-        date_str = follow_up_date.strftime('%Y-%m-%d')
-        booked = self.bookings[
-            (self.bookings['booking_status'] == 'Active') &
-            (self.bookings['follow_up_date'] == date_str)
-        ]
-        taken = booked['follow_up_time'].tolist() if not booked.empty else []
-        return [t for t in ["Daytime", "Evening"] if t not in taken]
+        # Create a list of booked intervals
+        booked_intervals = []
+        for _, row in active_bookings.iterrows():
+            time_str = row[visit_time_col]
+            try:
+                # Handle cases like "10:30"
+                booked_start_time = datetime.combine(visit_date, datetime.strptime(time_str, "%H:%M").time())
+                booked_end_time = booked_start_time + slot_duration
+                booked_intervals.append((booked_start_time, booked_end_time))
+            except (ValueError, TypeError):
+                # Ignore invalid time formats or empty cells
+                continue
+        
+        # Filter potential slots to find ones that do not overlap
+        available_slots = []
+        for potential_start in potential_slots:
+            potential_end = potential_start + slot_duration
+            is_available = True
+            for booked_start, booked_end in booked_intervals:
+                # Check for overlap: (StartA < EndB) and (EndA > StartB)
+                if potential_start < booked_end and potential_end > booked_start:
+                    is_available = False
+                    break
+            if is_available:
+                available_slots.append(potential_start.strftime("%H:%M"))
+                
+        return available_slots
 
     def check_baseline_availability(self, baseline_date, group):
         """Check if baseline date is available for the given group"""
@@ -290,16 +325,17 @@ class StudyBookingSystem:
             return True
 
         date_str = baseline_date.strftime('%Y-%m-%d')
-        time = "Daytime" if group == "WEDNESDAY" else "Evening"
+        # Baseline time is fixed based on group, so this logic remains
+        time_slot = "Daytime" if group == "WEDNESDAY" else "Evening"
         match = self.bookings[
             (self.bookings['booking_status'] == 'Active') &
             (self.bookings['baseline_date'] == date_str) &
-            (self.bookings['baseline_time'] == time)
+            (self.bookings['baseline_time'] == time_slot)
         ]
         return match.empty
 
     def book_participant(self, name, participant_id, email, group, baseline_date, pre_dosing_date,
-                        dosing_date, follow_up_date, pre_dosing_time, follow_up_time):
+                         dosing_date, follow_up_date, pre_dosing_time, follow_up_time):
         """Book a participant for all four visits with fixed DataFrame handling"""
         try:
             # Validate the booking dates
@@ -479,43 +515,43 @@ st.markdown("""
 
 The DIPP study requires participants to attend four separate visits:
 
-1. **Baseline Visit (Visit 1)**: About 3 weeks before your dosing day, you'll come in for your first baseline visit to do surveys and computer tasks (about 3 hours).
-   **Location: 26 Bedford Way, London, WC1H 0AP**
+1.  **Baseline Visit (Visit 1)**: About 3 weeks before your dosing day, you'll come in for your first baseline visit to do surveys and computer tasks (about 3 hours).
+    **Location: 26 Bedford Way, London, WC1H 0AP**
 
-2. **Pre-dosing Visit (Visit 2)**: One day before your dosing, you'll need to come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
-   **Location: 26 Bedford Way, London, WC1H 0AP**
+2.  **Pre-dosing Visit (Visit 2)**: One day before your dosing, you'll need to come in for about **5 hours** to complete surveys, computer tasks, and have an fMRI movie scan.
+    **Location: 26 Bedford Way, London, WC1H 0AP**
 
-3. **Dosing Day (Visit 3)**: This is the main visit where you'll spend all day at the center. You can choose either a Wednesday or Saturday.
-   **Location: 1-19 Torrington Place, London, WC1E 7HB**
+3.  **Dosing Day (Visit 3)**: This is the main visit where you'll spend all day at the center. You can choose either a Wednesday or Saturday.
+    **Location: 1-19 Torrington Place, London, WC1E 7HB**
 
-4. **Follow-up Visit (Visit 4)**: About 2 weeks after your dosing day, you'll come in for about 5 hours to complete surveys, computer tasks, and have an fMRI movie scan. You can choose either daytime or evening.
-   **Location: 26 Bedford Way, London, WC1H 0AP**
+4.  **Follow-up Visit (Visit 4)**: About 2 weeks after your dosing day, you'll come in for about **5 hours** to complete surveys, computer tasks, and have an fMRI movie scan.
+    **Location: 26 Bedford Way, London, WC1H 0AP**
 
 **Important**: Between Visit 1 and Visit 2, you'll complete the 21-day preparation programme using our web app. This includes daily morning practices, weekly activities, and submitting a brief voice note twice a day (we'll guide you through the whole process).
 
 **Note about time slots**:
-* **Daytime**: Generally between 9:00 AM - 5:00 PM
-* **Evening**: Generally between 5:00 PM - 10:00 PM
+* For Visits 2 and 4, you will select a specific start time below. This will reserve a **5-hour block** for your session. The research team will contact you to confirm the exact start time.
+* For Visit 1 (Baseline), the time is fixed to either 'Daytime' or 'Evening' depending on your group.
 
-The research team will contact you to arrange specific times within these blocks. You can use the booking system below to book your slot. Once you have booked a slot, it will no longer be available for other people to book. If you cannot attend any of the available slots, please contact the DIPP Research Team directly (dipp-project@ucl.ac.uk).
+If you cannot attend any of the available slots, please contact the DIPP Research Team directly (dipp-project@ucl.ac.uk).
 
 ---
-            
+         
 ## Our Scheduling System
 
 We have two scheduling groups:
 
 ### Wednesday Dosing Group:
 - **Dosing Day**: Wednesday (all day)
-- **Pre-dosing Visit**: Tuesday (1 day before), choose daytime or evening
+- **Pre-dosing Visit**: Tuesday (1 day before), choose an available 5-hour slot
 - **Baseline Visit**: Monday (at least 22 days before dosing), daytime only
-- **Follow-up Visit**: Thursday (about 2 weeks after dosing), choose daytime or evening
+- **Follow-up Visit**: Thursday (about 2 weeks after dosing), choose an available 5-hour slot
 
 ### Saturday Dosing Group:
 - **Dosing Day**: Saturday (all day)
-- **Pre-dosing Visit**: Friday (1 day before), choose daytime or evening
+- **Pre-dosing Visit**: Friday (1 day before), choose an available 5-hour slot
 - **Baseline Visit**: Monday (at least 22 days before dosing), evening only
-- **Follow-up Visit**: Sunday (about 2 weeks after dosing), choose daytime or evening
+- **Follow-up Visit**: Sunday (about 2 weeks after dosing), choose an available 5-hour slot
 
 Please select your preferred dosing group and date below.
 """)
@@ -584,21 +620,26 @@ with tab1:
                 if not baseline_available:
                     st.warning(f"⚠️ This baseline slot is already booked. Please select a different dosing date.")
                 
-                # Visit 2: Pre-dosing
+                # <<< CHANGED: Visit 2 UI
                 st.markdown("#### Visit 2: Pre-dosing")
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown(f"**Date**: {pre_dosing_date.strftime('%A, %B %d, %Y')}")
                 with col2:
-                    available_pre_dosing_times = booking_system.get_available_pre_dosing_times(pre_dosing_date, group)
+                    st.markdown("**Select Start Time**")
+                    st.caption("Reserves a 5-hour block")
+                    available_pre_dosing_times = booking_system.get_available_time_slots(
+                        pre_dosing_date, 'pre_dosing_date', 'pre_dosing_time'
+                    )
                     if not available_pre_dosing_times:
                         st.warning("⚠️ No available time slots for this pre-dosing date.")
                         pre_dosing_time = None
                     else:
-                        pre_dosing_time = st.radio(
-                            "Select Time for Pre-dosing Visit", 
+                        pre_dosing_time = st.selectbox(
+                            "Available start times for Pre-dosing Visit", 
                             options=available_pre_dosing_times,
-                            key="pre_dosing_time"
+                            key="pre_dosing_time",
+                            label_visibility="collapsed"
                         )
                 with col3:
                     st.markdown("**Location**: 26 Bedford Way, WC1H 0AP")
@@ -613,21 +654,26 @@ with tab1:
                 with col3:
                     st.markdown("**Location**: 1-19 Torrington Place, WC1E 7HB")
                 
-                # Visit 4: Follow-up
+                # <<< CHANGED: Visit 4 UI
                 st.markdown("#### Visit 4: Follow-up")
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.markdown(f"**Date**: {follow_up_date.strftime('%A, %B %d, %Y')}")
                 with col2:
-                    available_follow_up_times = booking_system.get_available_follow_up_times(follow_up_date, group)
+                    st.markdown("**Select Start Time**")
+                    st.caption("Reserves a 5-hour block")
+                    available_follow_up_times = booking_system.get_available_time_slots(
+                        follow_up_date, 'follow_up_date', 'follow_up_time'
+                    )
                     if not available_follow_up_times:
                         st.warning("⚠️ No available time slots for this follow-up date.")
                         follow_up_time = None
                     else:
-                        follow_up_time = st.radio(
-                            "Select Time for Follow-up Visit", 
+                        follow_up_time = st.selectbox(
+                            "Available start times for Follow-up Visit", 
                             options=available_follow_up_times,
-                            key="follow_up_time"
+                            key="follow_up_time",
+                            label_visibility="collapsed"
                         )
                 with col3:
                     st.markdown("**Location**: 26 Bedford Way, WC1H 0AP")
@@ -681,11 +727,11 @@ with tab1:
                             st.markdown(f"{follow_up_date.strftime('%A, %B %d, %Y')}")
                         with col3:
                             st.markdown("**Time**")
-                            baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
-                            st.markdown(f"{baseline_time}")
-                            st.markdown(f"{pre_dosing_time}")
+                            baseline_time_display = "Daytime" if group == "WEDNESDAY" else "Evening"
+                            st.markdown(f"{baseline_time_display}")
+                            st.markdown(f"{pre_dosing_time}") # <<< CHANGED
                             st.markdown("All Day")
-                            st.markdown(f"{follow_up_time}")
+                            st.markdown(f"{follow_up_time}") # <<< CHANGED
                         with col4:
                             st.markdown("**Location**")
                             st.markdown("26 Bedford Way, WC1H 0AP")
@@ -703,30 +749,26 @@ with tab1:
                         
                         Please copy or write down the following information in your personal calendar:
                         
-                        **Visit 1 (Baseline)**  
-                        Date: {baseline_date}  
-                        Time: {baseline_time}  
+                        **Visit 1 (Baseline)** Date: {baseline_date}   
+                        Time: {baseline_time}   
                         Location: 26 Bedford Way, London, WC1H 0AP
                         
-                        **Visit 2 (Pre-dosing)**  
-                        Date: {pre_dosing_date}  
-                        Time: {pre_dosing_time}  
+                        **Visit 2 (Pre-dosing)** Date: {pre_dosing_date}   
+                        Start Time: {pre_dosing_time} (This is a 5-hour session)  
                         Location: 26 Bedford Way, London, WC1H 0AP
                         
-                        **Visit 3 (Dosing Day)**  
-                        Date: {dosing_date}  
-                        Time: All Day  
+                        **Visit 3 (Dosing Day)** Date: {dosing_date}   
+                        Time: All Day   
                         Location: 1-19 Torrington Place, London, WC1E 7HB
                         
-                        **Visit 4 (Follow-up)**  
-                        Date: {follow_up_date}  
-                        Time: {follow_up_time}  
+                        **Visit 4 (Follow-up)** Date: {follow_up_date}   
+                        Start Time: {follow_up_time} (This is a 5-hour session)  
                         Location: 26 Bedford Way, London, WC1H 0AP
                         
-                        **Note**: The DIPP research team will contact you to confirm the exact time within these blocks.
+                        **Note**: The DIPP research team will contact you to confirm the exact time.
                         """.format(
                             baseline_date=baseline_date.strftime("%A, %B %d, %Y"),
-                            baseline_time=baseline_time,
+                            baseline_time=baseline_time_display,
                             pre_dosing_date=pre_dosing_date.strftime("%A, %B %d, %Y"),
                             pre_dosing_time=pre_dosing_time,
                             dosing_date=dosing_date.strftime("%A, %B %d, %Y"),
@@ -808,7 +850,7 @@ with tab2:
             else:
                 # Create options for selection
                 booking_options = {f"{row['participant_id']} - {row['name']} - {row['dosing_date']}": row['participant_id'] 
-                                  for _, row in active_bookings.iterrows()}
+                                   for _, row in active_bookings.iterrows()}
                 
                 # Select booking to cancel
                 selected_booking = st.selectbox("Select Booking to Cancel", options=list(booking_options.keys()))
@@ -834,7 +876,7 @@ with tab2:
             # Add this inside the admin tab, in the "System Management" section
             st.markdown("#### Debug Information")
             if st.button("Show Debug Info"):
-                st.write("App Version: 1.0.1")
+                st.write("App Version: 1.1")
                 st.write("Google Sheet Connection:", "Connected" if sheet else "Not Connected")
                 
                 if not booking_system.bookings.empty:
