@@ -16,7 +16,7 @@ st.set_page_config(
 def get_gsheet():
     """Connects to Google Sheets and returns the sheet object, cached."""
     st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 5.0 (Flexible Baseline)")
+    st.sidebar.caption("Version 5.1 (Final)")
     try:
         if "google_sheets" not in st.secrets:
             st.sidebar.error("Google Sheets credentials not found in secrets.")
@@ -63,8 +63,10 @@ class StudyBookingSystem:
             st.warning(f"Could not read sheet data: {e}")
 
     def get_dosing_dates(self, group):
-        """Returns a list of available dosing dates for a specific group."""
-        start_date, end_date = datetime(2025, 5, 1).date(), datetime.today().date() + timedelta(days=365)
+        """Returns a list of available dosing dates for a specific group until Nov 19, 2025."""
+        start_date = datetime.today().date()
+        # --- CHANGED: End date is now fixed to November 19th, 2025 ---
+        end_date = datetime(2025, 11, 19).date()
         target_day = 2 if group == 'WEDNESDAY' else 5
         
         valid_dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1) if (start_date + timedelta(days=i)).weekday() == target_day]
@@ -96,13 +98,10 @@ class StudyBookingSystem:
     def get_available_baseline_slots(self, baseline_date, group):
         """Generates available 3-hour time slots for the baseline visit, checking for conflicts."""
         slot_duration = timedelta(hours=3)
+        start_range, end_range = ("09:00", "14:00") if group == 'WEDNESDAY' else ("17:00", "19:30")
         
-        if group == 'WEDNESDAY':
-            start_time = datetime.strptime("09:00", "%H:%M")
-            end_time = datetime.strptime("14:00", "%H:%M")
-        else: # SATURDAY group
-            start_time = datetime.strptime("17:00", "%H:%M")
-            end_time = datetime.strptime("19:30", "%H:%M")
+        start_time = datetime.strptime(start_range, "%H:%M")
+        end_time = datetime.strptime(end_range, "%H:%M")
             
         potential_slots = []
         current_slot = start_time
@@ -110,7 +109,6 @@ class StudyBookingSystem:
             potential_slots.append(current_slot)
             current_slot += timedelta(minutes=30)
             
-        # Get existing bookings for that specific baseline date
         booked_intervals = []
         if not self.bookings.empty:
             date_str = baseline_date.strftime('%Y-%m-%d')
@@ -121,7 +119,6 @@ class StudyBookingSystem:
                     booked_intervals.append((booked_start_time, booked_start_time + slot_duration))
                 except (ValueError, TypeError): continue
         
-        # Filter out slots that conflict with existing bookings
         available_slots = []
         for potential_start in potential_slots:
             potential_end = potential_start + slot_duration
@@ -185,25 +182,31 @@ else:
 
 # --- 5. UI: TITLE AND INFORMATION ---
 st.title("DIPP Study Participant Booking System")
+
+# --- CHANGED: More informative text ---
 st.markdown("""
-### About the DIPP study visits
-The DIPP study requires participants to attend four separate visits:
-1.  **Baseline Visit (Visit 1)**: A **3-hour** session for surveys and computer tasks. You will select a specific start time for this visit below.  
-    **Location: 26 Bedford Way, London, WC1H 0AP**
+### How Your Study Visits Are Scheduled
+The DIPP study involves four visits, and all dates are automatically calculated based on the **Dosing Day (Visit 3)** you select. Here's how it works:
+- **Visit 3 (Dosing Day):** This is the main, all-day visit at **1-19 Torrington Place, WC1E 7HB**. You will arrive at **10:00** and be collected by your designated person at **17:00**. This is the key date you will choose below.
 
-2.  **Pre-dosing Visit (Visit 2)**: A **5-hour** session including surveys, tasks, and an fMRI scan. You will select a specific start time for this visit.  
-    **Location: 26 Bedford Way, London, WC1H 0AP**
+- **Visit 2 (Pre-dosing Visit):** This 5-hour session takes place the day *before* your Dosing Day.
+- **Visit 1 (Baseline Visit):** This 3-hour session takes place on a Monday *at least three weeks before* your Dosing Day.
+- **Visit 4 (Follow-up Visit):** This final 5-hour session takes place on a specific day *about two weeks after* your Dosing Day.
 
-3.  **Dosing Day (Visit 3)**: This is the main, all-day visit. You will arrive at **10:00** and be collected by your designated person at **17:00**.  
-    **Location: 1-19 Torrington Place, London, WC1E 7HB**
-
-4.  **Follow-up Visit (Visit 4)**: A final **5-hour** session including surveys, tasks, and an fMRI scan. You will select a specific start time for this visit.  
-    **Location: 26 Bedford Way, London, WC1H 0AP**
+All visits except the Dosing Day are at **26 Bedford Way, London, WC1H 0AP**.
 ---
-### Our Scheduling System
-The date of all your visits is determined by your chosen Dosing Day.
-- **If you choose a Wednesday Dosing Day**, your Baseline Visit will be on a Monday, and you can choose a start time between **09:00 - 14:00**.
-- **If you choose a Saturday Dosing Day**, your Baseline Visit will be on a Monday, and you can choose a start time between **17:00 - 19:30**.
+### Your Scheduling Group
+Your choice of a Wednesday or Saturday for the Dosing Day determines your scheduling group and the specific days of the week for your other visits.
+
+#### If you choose a Wednesday Dosing Day:
+- Your Baseline Visit (V1) will be on a **Monday**. You can select a start time between **09:00 - 14:00**.
+- Your Pre-dosing Visit (V2) will be on a **Tuesday**.
+- Your Follow-up Visit (V4) will be on a **Thursday**.
+
+#### If you choose a Saturday Dosing Day:
+- Your Baseline Visit (V1) will be on a **Monday**. You can select a start time between **17:00 - 19:30**.
+- Your Pre-dosing Visit (V2) will be on a **Friday**.
+- Your Follow-up Visit (V4) will be on a **Sunday**.
 """)
 st.divider()
 
@@ -215,10 +218,10 @@ with tab1:
     
     st.subheader("Step 1: Your Information and Group")
     col1, col2 = st.columns(2)
-    name = col1.text_input("Full Name *", key="name_input")
-    participant_id = col1.text_input("Participant ID *", key="id_input")
-    email = col2.text_input("Email Address *", key="email_input")
-    group = col2.radio("Choose your preferred dosing day group:", ["WEDNESDAY", "SATURDAY"], key="group_select", horizontal=True)
+    name = col1.text_input("Full Name *")
+    participant_id = col1.text_input("Participant ID *")
+    email = col2.text_input("Email Address *")
+    group = col2.radio("Choose your Dosing Day group:", ["WEDNESDAY", "SATURDAY"], horizontal=True)
 
     if name and participant_id and email:
         st.subheader("Step 2: Select Your Schedule")
@@ -235,7 +238,6 @@ with tab1:
             baseline_date = booking_system.get_baseline_date(dosing_date)
             pre_dosing_date = booking_system.get_pre_scan_date(dosing_date)
             follow_up_date = booking_system.get_follow_up_date(dosing_date, group)
-            
             available_baseline_times = booking_system.get_available_baseline_slots(baseline_date, group)
             
             st.info(f"**Your automatically generated visit dates:**\n\n"
@@ -249,11 +251,10 @@ with tab1:
                 st.error(f"There are no available 3-hour slots for your Baseline Visit on {baseline_date.strftime('%A, %d %b')}. Please select a different Dosing Date above.", icon="❌")
             else:
                 col1, col2, col3 = st.columns(3)
-                baseline_time = col1.selectbox("Choose a start time for Visit 1 (Baseline):", available_baseline_times, key="v1_time")
-                
+                baseline_time = col1.selectbox("Choose start time for Visit 1 (Baseline):", available_baseline_times)
                 available_v2_v4_times = booking_system.generate_daily_time_slots()
-                pre_dosing_time = col2.selectbox("Choose a start time for Visit 2 (Pre-dosing):", available_v2_v4_times, key="v2_time")
-                follow_up_time = col3.selectbox("Choose a start time for Visit 4 (Follow-up):", available_v2_v4_times, key="v4_time")
+                pre_dosing_time = col2.selectbox("Choose start time for Visit 2 (Pre-dosing):", available_v2_v4_times)
+                follow_up_time = col3.selectbox("Choose start time for Visit 4 (Follow-up):", available_v2_v4_times)
                 
                 st.divider()
                 if st.button("✅ **Confirm and Book All Appointments**", type="primary", use_container_width=True):
@@ -269,8 +270,10 @@ with tab1:
                         }
                         success, message = booking_system.book_participant(booking_details)
                         if success:
-                            st.success("Booking Confirmed! Please write these dates in your calendar.")
+                            st.success("Booking Confirmed!")
                             st.balloons()
+                            # --- CHANGED: Added final reminder text ---
+                            st.info("**Reminder:** Please put these dates into your calendar. A member of the research team will be in contact to confirm these and send calendar invites.", icon="🔔")
                         else:
                             st.error(f"Booking Failed: {message}")
 
