@@ -16,7 +16,7 @@ st.set_page_config(
 def get_gsheet():
     """Connects to Google Sheets and returns the sheet object, cached."""
     st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 2.1 (Corrected Logic)")
+    st.sidebar.caption("Version 3.0 (Interactive)")
     try:
         if "google_sheets" not in st.secrets:
             st.sidebar.error("Google Sheets credentials not found in secrets.")
@@ -93,9 +93,7 @@ class StudyBookingSystem:
 
     def get_baseline_date(self, dosing_date):
         """V1 Date: Finds the Monday that is at least 22 days before dosing."""
-        # Start by looking 22 days back
         current = dosing_date - timedelta(days=22)
-        # Keep moving one day back until we land on a Monday (weekday() == 0)
         while current.weekday() != 0:
             current -= timedelta(days=1)
         return current
@@ -104,7 +102,7 @@ class StudyBookingSystem:
         """Generates a static list of start times for the 5-hour sessions."""
         slots = []
         start_time = datetime.strptime("09:00", "%H:%M")
-        end_time = datetime.strptime("17:00", "%H:%M") # Latest start time
+        end_time = datetime.strptime("17:00", "%H:%M")
         
         current_slot = start_time
         while current_slot <= end_time:
@@ -143,7 +141,6 @@ else:
 
 # --- 5. UI: TITLE AND INFORMATION ---
 st.title("DIPP Study Participant Booking System")
-# (Informational markdown text remains the same as previous correct version)
 st.markdown("""
 ### About the DIPP study visits
 The DIPP study requires participants to attend four separate visits:
@@ -161,41 +158,42 @@ We have two scheduling groups based on your chosen Dosing Day:
 """)
 st.divider()
 
-# --- 6. UI: BOOKING FORM ---
+# --- 6. UI: INTERACTIVE BOOKING FLOW (NO FORM) ---
 st.header("🗓️ Book Your Appointments")
 
-with st.form("booking_form"):
-    # --- Step 1: Participant Info & Group Selection ---
-    st.subheader("Step 1: Your Information and Group")
-    col1, col2 = st.columns(2)
-    name = col1.text_input("Full Name *", help="Please enter your full name.")
-    participant_id = col1.text_input("Participant ID *", help="Enter the ID provided by the research team.")
-    email = col2.text_input("Email Address *", help="We will send a confirmation to this address.")
-    group = col2.radio("Choose your preferred dosing day group:", ["WEDNESDAY", "SATURDAY"], horizontal=True)
+# Step 1: Participant Info
+st.subheader("Step 1: Your Information")
+col1, col2 = st.columns(2)
+name = col1.text_input("Full Name *", key="name_input")
+participant_id = col1.text_input("Participant ID *", key="id_input")
+email = col2.text_input("Email Address *", key="email_input")
 
-    # --- Step 2: Dosing Date Selection ---
-    st.subheader("Step 2: Select Your Dosing Day (Visit 3)")
+# Subsequent steps only appear if initial info is provided
+if name and participant_id and email:
+    st.subheader("Step 2: Select Your Schedule")
+
+    # Group selection triggers an immediate rerun to update the dosing date list
+    group = st.radio("Choose your preferred dosing day group:", ["WEDNESDAY", "SATURDAY"], key="group_select", horizontal=True)
+
     dosing_dates = booking_system.get_dosing_dates(group)
     dosing_date = st.selectbox(
-        f"Select an available **{group.capitalize()}** Dosing Date:",
+        f"Select an available **{group.capitalize()}** Dosing Date (Visit 3):",
         dosing_dates,
         format_func=lambda x: x.strftime("%A, %B %d, %Y"),
         index=None,
         placeholder="Choose a date"
     )
 
-    # --- Step 3: Schedule Review and Time Selection ---
-    st.subheader("Step 3: Review Your Schedule and Select Times")
+    # The rest of the UI appears only after a dosing date is selected
     if dosing_date:
-        # **This is the corrected logic flow:**
-        # 1. Calculate all dates first.
+        # Calculate all other dates based on the selected dosing date
         baseline_date = booking_system.get_baseline_date(dosing_date)
         pre_dosing_date = booking_system.get_pre_scan_date(dosing_date)
         follow_up_date = booking_system.get_follow_up_date(dosing_date, group)
         baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
         is_baseline_available = booking_system.check_baseline_availability(baseline_date, group)
 
-        # 2. Display the calculated schedule clearly.
+        # Display the full, calculated schedule
         st.info(
             f"""
             **Here is your automatically generated schedule:**
@@ -206,51 +204,34 @@ with st.form("booking_form"):
             """
         )
 
-        # 3. Check for blocking issues and allow time selection if clear.
+        # Show an error and stop if the required baseline is unavailable
         if not is_baseline_available:
             st.error(f"The required Baseline slot ({baseline_time} on {baseline_date.strftime('%d %b')}) is already booked. Please select a different Dosing Date above.", icon="❌")
         else:
-            col1, col2 = st.columns(2)
+            # If baseline is available, show the time selectors
+            st.subheader("Step 3: Choose Start Times for Visits 2 & 4")
+            col3, col4 = st.columns(2)
             available_times = booking_system.generate_daily_time_slots()
-            pre_dosing_time = col1.selectbox("Choose a start time for Visit 2:", available_times)
-            follow_up_time = col2.selectbox("Choose a start time for Visit 4:", available_times)
+            pre_dosing_time = col3.selectbox("Choose a start time for Visit 2:", available_times, key="v2_time")
+            follow_up_time = col4.selectbox("Choose a start time for Visit 4:", available_times, key="v4_time")
+            
+            st.divider()
 
-    else:
-        st.warning("Please select a dosing date to see your full schedule and choose times.")
-
-    # --- Step 4: Submission ---
-    st.divider()
-    submitted = st.form_submit_button("✅ **Confirm and Book All Appointments**", type="primary", use_container_width=True)
-
-if submitted:
-    if not all([name, participant_id, email, dosing_date]):
-        st.error("Please fill in all information and select a dosing date.")
-    # Re-check availability on submit to prevent race conditions
-    elif not booking_system.check_baseline_availability(booking_system.get_baseline_date(dosing_date), group):
-        st.error("Booking failed because the required Baseline slot has just been taken. Please refresh and select a different Dosing Date.")
-    else:
-        with st.spinner("Booking your appointments..."):
-            # Re-calculate dates inside the submission logic to ensure they are defined
-            final_baseline_date = booking_system.get_baseline_date(dosing_date)
-            final_pre_dosing_date = booking_system.get_pre_scan_date(dosing_date)
-            final_follow_up_date = booking_system.get_follow_up_date(dosing_date, group)
-            final_baseline_time = "Daytime" if group == "WEDNESDAY" else "Evening"
-            # We need to get the selected times from session state if they are inside columns
-            final_pre_dosing_time = pre_dosing_time
-            final_follow_up_time = follow_up_time
-
-            booking_details = {
-                'name': name, 'participant_id': participant_id, 'email': email, 'group': group,
-                'baseline_date': final_baseline_date.strftime('%Y-%m-%d'), 'baseline_time': final_baseline_time,
-                'pre_dosing_date': final_pre_dosing_date.strftime('%Y-%m-%d'), 'pre_dosing_time': final_pre_dosing_time,
-                'dosing_date': dosing_date.strftime('%Y-%m-%d'), 'dosing_time': 'All Day',
-                'follow_up_date': final_follow_up_date.strftime('%Y-%m-%d'), 'follow_up_time': final_follow_up_time,
-                'booking_status': 'Active', 'notes': '', 'booking_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'cancellation_time': ''
-            }
-            success, message = booking_system.book_participant(booking_details)
-            if success:
-                st.success("Booking Confirmed! Please write these dates in your calendar.")
-                st.balloons()
-            else:
-                st.error(f"Booking Failed: {message}")
+            # The final confirmation button
+            if st.button("✅ **Confirm and Book All Appointments**", type="primary", use_container_width=True):
+                with st.spinner("Booking your appointments..."):
+                    booking_details = {
+                        'name': name, 'participant_id': participant_id, 'email': email, 'group': group,
+                        'baseline_date': baseline_date.strftime('%Y-%m-%d'), 'baseline_time': baseline_time,
+                        'pre_dosing_date': pre_dosing_date.strftime('%Y-%m-%d'), 'pre_dosing_time': pre_dosing_time,
+                        'dosing_date': dosing_date.strftime('%Y-%m-%d'), 'dosing_time': 'All Day',
+                        'follow_up_date': follow_up_date.strftime('%Y-%m-%d'), 'follow_up_time': follow_up_time,
+                        'booking_status': 'Active', 'notes': '', 'booking_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'cancellation_time': ''
+                    }
+                    success, message = booking_system.book_participant(booking_details)
+                    if success:
+                        st.success("Booking Confirmed! Please write these dates in your calendar.")
+                        st.balloons()
+                    else:
+                        st.error(f"Booking Failed: {message}")
