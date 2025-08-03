@@ -241,10 +241,10 @@ with tab1:
             available_baseline_times = booking_system.get_available_baseline_slots(baseline_date, group)
             
             st.info(f"**Your automatically generated visit dates:**\n\n"
-                    f"- **V1 (Baseline):** `{baseline_date.strftime('%A, %d %b %Y')}`\n\n"
-                    f"- **V2 (Pre-dosing):** `{pre_dosing_date.strftime('%A, %d %b %Y')}`\n\n"
-                    f"- **V3 (Dosing Day):** `{dosing_date.strftime('%A, %d %b %Y')}`\n\n"
-                    f"- **V4 (Follow-up):** `{follow_up_date.strftime('%A, %d %b %Y')}`")
+                    f"- **V1 (Baseline (approx. 3 hours)):** `{baseline_date.strftime('%A, %d %b %Y')}`\n\n"
+                    f"- **V2 (Pre-dosing (approx. 5 hours)):** `{pre_dosing_date.strftime('%A, %d %b %Y')}`\n\n"
+                    f"- **V3 (Dosing Day (10:00 - 17:30)):** `{dosing_date.strftime('%A, %d %b %Y')}`\n\n"
+                    f"- **V4 (Follow-up (approx. 5 hours)):** `{follow_up_date.strftime('%A, %d %b %Y')}`")
 
             st.subheader("Step 3: Choose Start Times for Your Visits")
             if not available_baseline_times:
