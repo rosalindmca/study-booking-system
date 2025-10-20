@@ -63,21 +63,41 @@ class StudyBookingSystem:
             st.warning(f"Could not read sheet data: {e}")
 
     def get_dosing_dates(self, group):
-        """Returns a list of available dosing dates for a specific group until Nov 19, 2025."""
-        start_date = datetime.today().date()
-        # --- CHANGED: End date is now fixed to November 19th, 2025 ---
-        end_date = datetime(2025, 11, 19).date()
+        """Returns a list of available dosing dates for a specific group with two date ranges."""
         target_day = 2 if group == 'WEDNESDAY' else 5
         
-        valid_dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1) if (start_date + timedelta(days=i)).weekday() == target_day]
+        # First range: today until Nov 29, 2025
+        start_date1 = datetime.today().date()
+        end_date1 = datetime(2025, 11, 29).date()
         
+        # Second range: Jan 28, 2026 until Apr 4, 2026
+        start_date2 = datetime(2026, 1, 28).date()
+        end_date2 = datetime(2026, 4, 4).date()
+        
+        valid_dates = []
+        
+        # Generate dates for first range
+        for i in range((end_date1 - start_date1).days + 1):
+            date = start_date1 + timedelta(days=i)
+            if date.weekday() == target_day:
+                valid_dates.append(date)
+        
+        # Generate dates for second range
+        for i in range((end_date2 - start_date2).days + 1):
+            date = start_date2 + timedelta(days=i)
+            if date.weekday() == target_day:
+                valid_dates.append(date)
+        
+        # Remove already booked dates
         booked_dates = []
         if not self.bookings.empty:
             active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
             for date_str in active_bookings['dosing_date'].dropna():
                 try:
                     booked_dates.append(datetime.strptime(date_str, '%Y-%m-%d').date())
-                except (ValueError, TypeError): pass
+                except (ValueError, TypeError): 
+                    pass
+        
         return [d for d in valid_dates if d not in booked_dates]
 
     def get_pre_scan_date(self, d_date): return d_date - timedelta(days=1)
@@ -132,10 +152,10 @@ class StudyBookingSystem:
         
         return available_slots
 
-    def generate_daily_time_slots(self):
+    def generate_daily_time_slots(self, start_hour="09:00"):
         """Generates a static list of start times for the 5-hour sessions."""
         slots = []
-        start_time = datetime.strptime("09:00", "%H:%M")
+        start_time = datetime.strptime(start_hour, "%H:%M")
         end_time = datetime.strptime("18:30", "%H:%M")
         
         current_slot = start_time
@@ -252,9 +272,11 @@ with tab1:
             else:
                 col1, col2, col3 = st.columns(3)
                 baseline_time = col1.selectbox("Choose start time for Visit 1 (Baseline):", available_baseline_times)
-                available_v2_v4_times = booking_system.generate_daily_time_slots()
-                pre_dosing_time = col2.selectbox("Choose start time for Visit 2 (Pre-dosing):", available_v2_v4_times)
-                follow_up_time = col3.selectbox("Choose start time for Visit 4 (Follow-up):", available_v2_v4_times)
+                available_v2_times = booking_system.generate_daily_time_slots()
+                pre_dosing_time = col2.selectbox("Choose start time for Visit 2 (Pre-dosing):", available_v2_times)
+                # Thursday starts at 11am, others at 9am
+                available_v4_times = booking_system.generate_daily_time_slots("11:00" if group == "WEDNESDAY" else "09:00")
+                follow_up_time = col3.selectbox("Choose start time for Visit 4 (Follow-up):", available_v4_times)
                 
                 st.divider()
                 if st.button("✅ **Confirm and Book All Appointments**", type="primary", use_container_width=True):
