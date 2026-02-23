@@ -16,7 +16,7 @@ st.set_page_config(
 def get_gsheet():
     """Connects to Google Sheets and returns the sheet object, cached."""
     st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 5.2 (Extended Dates)")
+    st.sidebar.caption("Version 5.1 (Final)")
     try:
         if "google_sheets" not in st.secrets:
             st.sidebar.error("Google Sheets credentials not found in secrets.")
@@ -70,9 +70,9 @@ class StudyBookingSystem:
         start_date1 = datetime.today().date()
         end_date1 = datetime(2025, 11, 29).date()
         
-        # Second range: Jan 28, 2026 until May 30, 2026 (UPDATED)
+        # Second range: Jan 28, 2026 until Apr 4, 2026
         start_date2 = datetime(2026, 1, 28).date()
-        end_date2 = datetime(2026, 5, 30).date()
+        end_date2 = datetime(2026, 4, 4).date()
         
         valid_dates = []
         
