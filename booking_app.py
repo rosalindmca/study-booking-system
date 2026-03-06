@@ -63,24 +63,14 @@ class StudyBookingSystem:
             st.warning(f"Could not read sheet data: {e}")
 
     def get_dosing_dates(self):
-        """Returns available Saturday dosing dates across two date ranges."""
-        # First range: today until Nov 29, 2025
-        start_date1 = datetime.today().date()
-        end_date1 = datetime(2025, 11, 29).date()
-
-        # Second range: Jan 28, 2026 until May 30, 2026
-        start_date2 = datetime(2026, 1, 28).date()
-        end_date2 = datetime(2026, 5, 30).date()
+        """Returns available Saturday dosing dates: May 2 – June 30, 2026."""
+        start_date = datetime(2026, 5, 2).date()
+        end_date = datetime(2026, 6, 30).date()
 
         valid_dates = []
 
-        for i in range((end_date1 - start_date1).days + 1):
-            date = start_date1 + timedelta(days=i)
-            if date.weekday() == 5:  # Saturday
-                valid_dates.append(date)
-
-        for i in range((end_date2 - start_date2).days + 1):
-            date = start_date2 + timedelta(days=i)
+        for i in range((end_date - start_date).days + 1):
+            date = start_date + timedelta(days=i)
             if date.weekday() == 5:  # Saturday
                 valid_dates.append(date)
 
@@ -97,9 +87,9 @@ class StudyBookingSystem:
         return [d for d in valid_dates if d not in booked_dates]
 
     def get_baseline_date(self, d_date):
-        """Most recent Monday that is at least 21 days before the dosing Saturday."""
+        """Most recent Tuesday that is at least 21 days before the dosing Saturday."""
         anchor = d_date - timedelta(days=21)
-        while anchor.weekday() != 0:  # 0 = Monday
+        while anchor.weekday() != 1:  # 1 = Tuesday
             anchor -= timedelta(days=1)
         return anchor
 
@@ -216,7 +206,7 @@ st.markdown("""
 ### How Your Study Visits Are Scheduled
 The DIPP study involves four visits. All dates are automatically calculated based on the **Dosing Day (Visit 3)** you select below.
 
-- **Visit 1 (Baseline, approx. 3 hours):** Takes place on a **Monday**, at least three weeks before your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
+- **Visit 1 (Baseline, approx. 3 hours):** Takes place on a **Tuesday**, at least three weeks before your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
 - **Visit 2 (Pre-dosing, approx. 2 hours):** Takes place on the **Friday** immediately before your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
 - **Visit 3 (Dosing Day, 10:00–18:00):** Your main all-day visit on a **Saturday**, at **1-19 Torrington Place, WC1E 7HB**. You will arrive at **10:00** and be collected at approximately **18:00**.
 - **Visit 4 (Follow-up, approx. 3 hours):** Takes place on a **Monday**, approximately two weeks after your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
@@ -279,7 +269,7 @@ with tab1:
 
             if not any_unavailable:
                 col1, col2, col3 = st.columns(3)
-                baseline_time = col1.selectbox("Visit 1 start time (Baseline, Mon):", available_v1_times)
+                baseline_time = col1.selectbox("Visit 1 start time (Baseline, Tue):", available_v1_times)
                 pre_dosing_time = col2.selectbox("Visit 2 start time (Pre-dosing, Fri):", available_v2_times)
                 follow_up_time = col3.selectbox("Visit 4 start time (Follow-up, Mon):", available_v4_times)
 
