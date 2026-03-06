@@ -11,17 +11,41 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- COLUMN DEFINITIONS ---
+# Internal keys used throughout the code
+COLUMNS = [
+    'name', 'participant_id', 'email',
+    'baseline_date', 'baseline_time',
+    'pre_dosing_date', 'pre_dosing_time',
+    'dosing_date', 'dosing_time',
+    'follow_up_date', 'follow_up_time',
+    'booking_status', 'notes', 'booking_time', 'cancellation_time'
+]
+
+# Human-readable headers written to Google Sheets
+SHEET_HEADERS = [
+    'Name', 'Participant ID', 'Email',
+    'V1 Date (Baseline - Tue)', 'V1 Start Time',
+    'V2 Date (Pre-dosing - Fri)', 'V2 Start Time',
+    'V3 Date (Dosing Day - Sat)', 'V3 Time',
+    'V4 Date (Follow-up - Mon)', 'V4 Start Time',
+    'Status', 'Notes', 'Booking Made', 'Cancellation Time'
+]
+
+# Mapping from sheet header back to internal key (for loading data)
+HEADER_TO_KEY = dict(zip(SHEET_HEADERS, COLUMNS))
+
+
 # --- 2. GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_gsheet():
-    """Connects to Google Sheets and returns the sheet object, cached."""
     st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 6.0")
+    st.sidebar.caption("Version 6.1")
     try:
         if "google_sheets" not in st.secrets:
             st.sidebar.error("Google Sheets credentials not found in secrets.")
             return None
-        
+
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_sheets"], scope)
         client = gspread.authorize(creds)
@@ -33,52 +57,63 @@ def get_gsheet():
         st.sidebar.error(f"Connection failed: {e}")
         return None
 
+
 # --- 3. BACKEND LOGIC CLASS ---
 class StudyBookingSystem:
-    """Handles all booking logic, data loading, and date calculations."""
     def __init__(self, sheet_connection):
         self.sheet = sheet_connection
-        self.columns = [
-            'name', 'participant_id', 'email', 'baseline_date', 'baseline_time',
-            'pre_dosing_date', 'pre_dosing_time', 'dosing_date', 'dosing_time',
-            'follow_up_date', 'follow_up_time', 'booking_status', 'notes', 'booking_time',
-            'cancellation_time'
-        ]
-        self.bookings = pd.DataFrame(columns=self.columns)
+        self.bookings = pd.DataFrame(columns=COLUMNS)
         if self.sheet:
             self._load_bookings_from_sheet()
 
     def _load_bookings_from_sheet(self):
-        """Loads all records from the Google Sheet into a pandas DataFrame."""
+        """Load sheet data, mapping friendly headers back to internal keys."""
         try:
             all_cells = self.sheet.get_all_values()
-            if not all_cells:
-                self.sheet.update('A1', [self.columns])
+            if not all_cells or len(all_cells) < 1:
                 return
-            
-            headers, data = all_cells[0], all_cells[1:]
-            if data:
-                self.bookings = pd.DataFrame(data, columns=headers)
+
+            raw_headers = all_cells[0]
+            data = all_cells[1:]
+
+            if not data:
+                return
+
+            # Remap headers: use internal key if we recognise the header, else use as-is
+            mapped_headers = [HEADER_TO_KEY.get(h, h) for h in raw_headers]
+            df = pd.DataFrame(data, columns=mapped_headers)
+
+            # Keep only the columns we care about (ignore stray old columns like 'group')
+            known_cols = [c for c in COLUMNS if c in df.columns]
+            self.bookings = df[known_cols].reindex(columns=COLUMNS, fill_value="")
         except Exception as e:
             st.warning(f"Could not read sheet data: {e}")
 
+    def initialise_sheet_headers(self):
+        """Clear the sheet and write fresh friendly headers."""
+        try:
+            self.sheet.clear()
+            self.sheet.update('A1', [SHEET_HEADERS])
+            self._load_bookings_from_sheet()
+            return True, "Sheet headers reset successfully."
+        except Exception as e:
+            return False, f"Failed to reset headers: {e}"
+
     def get_dosing_dates(self):
-        """Returns available Saturday dosing dates: May 2 – June 30, 2026."""
+        """Available Saturdays: 2 May – 30 June 2026."""
         start_date = datetime(2026, 5, 2).date()
         end_date = datetime(2026, 6, 30).date()
 
         valid_dates = []
-
         for i in range((end_date - start_date).days + 1):
             date = start_date + timedelta(days=i)
             if date.weekday() == 5:  # Saturday
                 valid_dates.append(date)
 
-        # Remove already booked dates
         booked_dates = []
         if not self.bookings.empty:
-            active_bookings = self.bookings[self.bookings['booking_status'] == 'Active']
-            for date_str in active_bookings['dosing_date'].dropna():
+            active = self.bookings[self.bookings['booking_status'] == 'Active']
+            for date_str in active['dosing_date'].dropna():
                 try:
                     booked_dates.append(datetime.strptime(date_str, '%Y-%m-%d').date())
                 except (ValueError, TypeError):
@@ -87,7 +122,7 @@ class StudyBookingSystem:
         return [d for d in valid_dates if d not in booked_dates]
 
     def get_baseline_date(self, d_date):
-        """Most recent Tuesday that is at least 21 days before the dosing Saturday."""
+        """Most recent Tuesday at least 21 days before dosing Saturday."""
         anchor = d_date - timedelta(days=21)
         while anchor.weekday() != 1:  # 1 = Tuesday
             anchor -= timedelta(days=1)
@@ -105,11 +140,7 @@ class StudyBookingSystem:
         return anchor
 
     def _get_available_slots(self, visit_date, date_col, time_col, duration_hours, start_str, end_str):
-        """
-        Generic slot generator: returns available start times for a visit,
-        checking for conflicts with existing active bookings on the same date.
-        end_str is the latest permitted start time (last slot + duration <= 18:00).
-        """
+        """Returns available start times, checking conflicts against existing active bookings."""
         slot_duration = timedelta(hours=duration_hours)
         start_time = datetime.strptime(start_str, "%H:%M")
         end_time = datetime.strptime(end_str, "%H:%M")
@@ -147,15 +178,12 @@ class StudyBookingSystem:
         return available_slots
 
     def get_available_baseline_slots(self, baseline_date):
-        """3-hour slots for V1 (Monday), 09:00 start, last start 15:00."""
         return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "09:00", "15:00")
 
     def get_available_pre_dosing_slots(self, pre_dosing_date):
-        """2-hour slots for V2 (Friday), 09:00 start, last start 16:00."""
         return self._get_available_slots(pre_dosing_date, 'pre_dosing_date', 'pre_dosing_time', 2, "09:00", "16:00")
 
     def get_available_follow_up_slots(self, follow_up_date):
-        """3-hour slots for V4 (Monday), 09:00 start, last start 15:00."""
         return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "09:00", "15:00")
 
     def book_participant(self, details):
@@ -163,7 +191,7 @@ class StudyBookingSystem:
             return False, "This Participant ID already has an active booking."
 
         if self.sheet:
-            row_to_save = [details.get(col, "") for col in self.columns]
+            row_to_save = [details.get(col, "") for col in COLUMNS]
             self.sheet.append_row(row_to_save, value_input_option='USER_ENTERED')
             self._load_bookings_from_sheet()
             return True, "Booking successful!"
@@ -174,14 +202,18 @@ class StudyBookingSystem:
         if not self.sheet:
             return False, "Cannot cancel: No connection to Google Sheets"
         try:
-            cell = self.sheet.find(participant_id)
-            if not cell:
-                return False, f"Could not find booking for participant ID: {participant_id}"
-            row_number = cell.row
-            headers = self.sheet.row_values(1)
-            status_col = headers.index('booking_status') + 1
-            notes_col = headers.index('notes') + 1
-            cancel_time_col = headers.index('cancellation_time') + 1
+            # Find the participant ID in column B (index 2)
+            col_b_values = self.sheet.col_values(2)  # 'Participant ID' column
+            if participant_id not in col_b_values:
+                return False, f"Could not find booking for Participant ID: {participant_id}"
+
+            row_number = col_b_values.index(participant_id) + 1  # 1-indexed
+            raw_headers = self.sheet.row_values(1)
+
+            status_col = raw_headers.index('Status') + 1
+            notes_col = raw_headers.index('Notes') + 1
+            cancel_time_col = raw_headers.index('Cancellation Time') + 1
+
             self.sheet.update_cell(row_number, status_col, 'Cancelled')
             self.sheet.update_cell(row_number, notes_col, f"Cancelled: {reason}")
             self.sheet.update_cell(row_number, cancel_time_col, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -191,12 +223,12 @@ class StudyBookingSystem:
             return False, f"Error during cancellation: {e}"
 
 
-# --- 4. INITIALIZE SYSTEM ---
+# --- 4. INITIALISE SYSTEM ---
 gsheet_connection = get_gsheet()
 if gsheet_connection:
     booking_system = StudyBookingSystem(gsheet_connection)
 else:
-    st.error("The booking system could not be initialized. Please check the Google Sheets connection and credentials.")
+    st.error("The booking system could not be initialised. Please check the Google Sheets connection and credentials.")
     st.stop()
 
 # --- 5. UI: TITLE AND INFORMATION ---
@@ -213,7 +245,7 @@ The DIPP study involves four visits. All dates are automatically calculated base
 """)
 st.divider()
 
-# --- 6. UI: BOOKING AND ADMIN TABS ---
+# --- 6. UI: TABS ---
 tab1, tab2 = st.tabs(["**🗓️ Book Appointment**", "**⚙️ Admin Panel**"])
 
 with tab1:
@@ -256,7 +288,6 @@ with tab1:
             available_v4_times = booking_system.get_available_follow_up_slots(follow_up_date)
 
             any_unavailable = False
-
             if not available_v1_times:
                 st.error(f"No available 3-hour slots for Visit 1 on {baseline_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
                 any_unavailable = True
@@ -308,7 +339,9 @@ with tab2:
 
     if password == admin_password:
         st.success("Access Granted", icon="🔓")
-        admin_tab1, admin_tab2 = st.tabs(["**View Bookings**", "**Cancel a Booking**"])
+        admin_tab1, admin_tab2, admin_tab3 = st.tabs([
+            "**View Bookings**", "**Cancel a Booking**", "**Sheet Setup**"
+        ])
 
         with admin_tab1:
             st.subheader("All Participant Bookings")
@@ -319,11 +352,15 @@ with tab2:
 
         with admin_tab2:
             st.subheader("Cancel an Existing Booking")
+            # Refresh bookings from sheet before displaying
             active_bookings = booking_system.bookings[booking_system.bookings['booking_status'] == 'Active']
             if active_bookings.empty:
-                st.info("No active bookings to cancel.")
+                st.info("No active bookings found. If you expect to see bookings here, use the **Sheet Setup** tab to reset headers and try again.")
             else:
-                options = {f"{row['participant_id']} - {row['name']}": row['participant_id'] for _, row in active_bookings.iterrows()}
+                options = {
+                    f"{row['participant_id']} — {row['name']} (Dosing: {row['dosing_date']})": row['participant_id']
+                    for _, row in active_bookings.iterrows()
+                }
                 selected_display = st.selectbox("Select a booking to cancel:", options.keys())
                 reason = st.text_input("Reason for cancellation:")
                 if st.button("🗑️ Cancel Selected Booking", type="primary"):
@@ -338,5 +375,25 @@ with tab2:
                                 st.rerun()
                             else:
                                 st.error(message)
+
+        with admin_tab3:
+            st.subheader("Reset Sheet Headers")
+            st.warning(
+                "Use this if the Google Sheet has old or mismatched headers (e.g. from a previous version of the app). "
+                "This will **clear the entire sheet** and write fresh headers. Only use this when there are no bookings to preserve.",
+                icon="⚠️"
+            )
+            st.markdown("The new headers will be:")
+            st.code(", ".join(SHEET_HEADERS))
+            if st.button("🔧 Reset Sheet Headers Now", type="primary"):
+                with st.spinner("Resetting headers..."):
+                    success, message = booking_system.initialise_sheet_headers()
+                    if success:
+                        st.success(message)
+                        st.cache_resource.clear()
+                        st.rerun()
+                    else:
+                        st.error(message)
+
     elif password:
         st.error("Incorrect password.", icon="🔒")
