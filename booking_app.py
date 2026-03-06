@@ -100,9 +100,9 @@ class StudyBookingSystem:
             return False, f"Failed to reset headers: {e}"
 
     def get_dosing_dates(self):
-        """Available Saturdays: 2 May – 31 October 2026."""
+        """Available Saturdays: 2 May – 30 September 2026."""
         start_date = datetime(2026, 5, 2).date()
-        end_date = datetime(2026, 10, 31).date()
+        end_date = datetime(2026, 9, 30).date()
 
         valid_dates = []
         for i in range((end_date - start_date).days + 1):
