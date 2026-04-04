@@ -12,6 +12,7 @@ st.set_page_config(
 )
 
 # --- COLUMN DEFINITIONS ---
+# Internal keys used throughout the code
 COLUMNS = [
     'name', 'participant_id', 'email',
     'baseline_date', 'baseline_time',
@@ -21,37 +22,25 @@ COLUMNS = [
     'booking_status', 'notes', 'booking_time', 'cancellation_time'
 ]
 
+# Human-readable headers written to Google Sheets
 SHEET_HEADERS = [
     'Name', 'Participant ID', 'Email',
-    'V1 Date (Baseline)', 'V1 Start Time',
-    'V2 Date (Pre-dosing)', 'V2 Start Time',
-    'V3 Date (Dosing Day)', 'V3 Time',
-    'V4 Date (Follow-up)', 'V4 Start Time',
+    'V1 Date (Baseline - Tue)', 'V1 Start Time',
+    'V2 Date (Pre-dosing - Fri)', 'V2 Start Time',
+    'V3 Date (Dosing Day - Sat)', 'V3 Time',
+    'V4 Date (Follow-up - Mon)', 'V4 Start Time',
     'Status', 'Notes', 'Booking Made', 'Cancellation Time'
 ]
 
+# Mapping from sheet header back to internal key (for loading data)
 HEADER_TO_KEY = dict(zip(SHEET_HEADERS, COLUMNS))
-
-# Fixed Wednesday dosing dates for W group
-WEDNESDAY_DOSING_DATES = [
-    datetime(2026, 5, 20).date(),
-    datetime(2026, 5, 27).date(),
-    datetime(2026, 6, 3).date(),
-    datetime(2026, 6, 10).date(),
-    datetime(2026, 6, 17).date(),
-    datetime(2026, 6, 24).date(),
-    datetime(2026, 7, 15).date(),
-    datetime(2026, 7, 22).date(),
-    datetime(2026, 8, 12).date(),
-    datetime(2026, 9, 16).date(),
-]
 
 
 # --- 2. GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_gsheet():
     st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 7.0")
+    st.sidebar.caption("Version 6.1")
     try:
         if "google_sheets" not in st.secrets:
             st.sidebar.error("Google Sheets credentials not found in secrets.")
@@ -78,6 +67,7 @@ class StudyBookingSystem:
             self._load_bookings_from_sheet()
 
     def _load_bookings_from_sheet(self):
+        """Load sheet data, mapping friendly headers back to internal keys."""
         try:
             all_cells = self.sheet.get_all_values()
             if not all_cells or len(all_cells) < 1:
@@ -89,15 +79,18 @@ class StudyBookingSystem:
             if not data:
                 return
 
+            # Remap headers: use internal key if we recognise the header, else use as-is
             mapped_headers = [HEADER_TO_KEY.get(h, h) for h in raw_headers]
             df = pd.DataFrame(data, columns=mapped_headers)
 
+            # Keep only the columns we care about (ignore stray old columns like 'group')
             known_cols = [c for c in COLUMNS if c in df.columns]
             self.bookings = df[known_cols].reindex(columns=COLUMNS, fill_value="")
         except Exception as e:
             st.warning(f"Could not read sheet data: {e}")
 
     def initialise_sheet_headers(self):
+        """Clear the sheet and write fresh friendly headers."""
         try:
             self.sheet.clear()
             self.sheet.update('A1', [SHEET_HEADERS])
@@ -106,26 +99,17 @@ class StudyBookingSystem:
         except Exception as e:
             return False, f"Failed to reset headers: {e}"
 
-    # --- GROUP DETECTION ---
-    def get_group(self, dosing_date):
-        """Returns 'W' for Wednesday dosing, 'S' for Saturday dosing."""
-        return 'W' if dosing_date.weekday() == 2 else 'S'
-
-    # --- DOSING DATES ---
     def get_dosing_dates(self):
-        """Available dosing dates: specific Wednesdays (W group) + Saturdays May–Sep 2026 (S group)."""
-        # Saturday dates
+        """Available Saturdays: 2 May – 30 September 2026."""
         start_date = datetime(2026, 5, 2).date()
         end_date = datetime(2026, 9, 30).date()
-        saturday_dates = []
+
+        valid_dates = []
         for i in range((end_date - start_date).days + 1):
             date = start_date + timedelta(days=i)
-            if date.weekday() == 5:
-                saturday_dates.append(date)
+            if date.weekday() == 5:  # Saturday
+                valid_dates.append(date)
 
-        all_dates = sorted(WEDNESDAY_DOSING_DATES + saturday_dates)
-
-        # Remove already-booked dates
         booked_dates = []
         if not self.bookings.empty:
             active = self.bookings[self.bookings['booking_status'] == 'Active']
@@ -135,41 +119,26 @@ class StudyBookingSystem:
                 except (ValueError, TypeError):
                     pass
 
-        return [d for d in all_dates if d not in booked_dates]
+        return [d for d in valid_dates if d not in booked_dates]
 
-    # --- DATE CALCULATIONS ---
-    def get_baseline_date(self, dosing_date):
-        """
-        W group: most recent Monday at least 21 days before dosing Wednesday.
-        S group: most recent Tuesday at least 21 days before dosing Saturday.
-        """
-        group = self.get_group(dosing_date)
-        anchor = dosing_date - timedelta(days=21)
-        target_weekday = 0 if group == 'W' else 1  # Monday=0, Tuesday=1
-        while anchor.weekday() != target_weekday:
+    def get_baseline_date(self, d_date):
+        """Most recent Tuesday at least 21 days before dosing Saturday."""
+        anchor = d_date - timedelta(days=21)
+        while anchor.weekday() != 1:  # 1 = Tuesday
             anchor -= timedelta(days=1)
         return anchor
 
-    def get_pre_dosing_date(self, dosing_date):
-        """
-        W group: Tuesday immediately before dosing Wednesday.
-        S group: Friday immediately before dosing Saturday.
-        """
-        return dosing_date - timedelta(days=1)
+    def get_pre_dosing_date(self, d_date):
+        """Friday immediately before dosing Saturday."""
+        return d_date - timedelta(days=1)
 
-    def get_follow_up_date(self, dosing_date):
-        """
-        W group: nearest Thursday on or after dosing + 14 days.
-        S group: nearest Monday on or after dosing + 14 days.
-        """
-        group = self.get_group(dosing_date)
-        anchor = dosing_date + timedelta(days=14)
-        target_weekday = 3 if group == 'W' else 0  # Thursday=3, Monday=0
-        while anchor.weekday() != target_weekday:
+    def get_follow_up_date(self, d_date):
+        """Nearest Monday on or after dosing + 14 days."""
+        anchor = d_date + timedelta(days=14)
+        while anchor.weekday() != 0:  # 0 = Monday
             anchor += timedelta(days=1)
         return anchor
 
-    # --- SLOT AVAILABILITY ---
     def _get_available_slots(self, visit_date, date_col, time_col, duration_hours, start_str, end_str):
         """Returns available start times, checking conflicts against existing active bookings."""
         slot_duration = timedelta(hours=duration_hours)
@@ -208,34 +177,15 @@ class StudyBookingSystem:
 
         return available_slots
 
-    def get_available_baseline_slots(self, baseline_date, group):
-        """
-        W group: 09:00–14:00 (3hr session, daytime Monday).
-        S group: 16:00–17:00 (3hr session, evening Tuesday, latest start = 17:00 to finish by 20:00).
-        """
-        if group == 'W':
-            return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "09:00", "14:00")
-        else:
-            return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "16:00", "17:00")
+    def get_available_baseline_slots(self, baseline_date):
+        return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "09:00", "15:00")
 
-    def get_available_pre_dosing_slots(self, pre_dosing_date, group):
-        """
-        Both groups: 09:00–15:00 (2hr session).
-        W group: Tuesday. S group: Friday.
-        """
-        return self._get_available_slots(pre_dosing_date, 'pre_dosing_date', 'pre_dosing_time', 2, "09:00", "15:00")
+    def get_available_pre_dosing_slots(self, pre_dosing_date):
+        return self._get_available_slots(pre_dosing_date, 'pre_dosing_date', 'pre_dosing_time', 2, "09:00", "16:00")
 
-    def get_available_follow_up_slots(self, follow_up_date, group):
-        """
-        W group: 09:00–14:00 (3hr session, daytime Thursday).
-        S group: 16:00–17:00 (3hr session, evening Monday, latest start = 17:00 to finish by 20:00).
-        """
-        if group == 'W':
-            return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "09:00", "14:00")
-        else:
-            return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "16:00", "17:00")
+    def get_available_follow_up_slots(self, follow_up_date):
+        return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "09:00", "15:00")
 
-    # --- BOOKING AND CANCELLATION ---
     def book_participant(self, details):
         if not self.bookings.empty and details['participant_id'] in self.bookings[self.bookings['booking_status'] == 'Active']['participant_id'].values:
             return False, "This Participant ID already has an active booking."
@@ -252,11 +202,12 @@ class StudyBookingSystem:
         if not self.sheet:
             return False, "Cannot cancel: No connection to Google Sheets"
         try:
-            col_b_values = self.sheet.col_values(2)
+            # Find the participant ID in column B (index 2)
+            col_b_values = self.sheet.col_values(2)  # 'Participant ID' column
             if participant_id not in col_b_values:
                 return False, f"Could not find booking for Participant ID: {participant_id}"
 
-            row_number = col_b_values.index(participant_id) + 1
+            row_number = col_b_values.index(participant_id) + 1  # 1-indexed
             raw_headers = self.sheet.row_values(1)
 
             status_col = raw_headers.index('Status') + 1
@@ -287,18 +238,10 @@ st.markdown("""
 ### How Your Study Visits Are Scheduled
 The DIPP study involves four visits. All dates are automatically calculated based on the **Dosing Day (Visit 3)** you select below.
 
-There are two dosing groups:
-- **Wednesday group (W):** Dosing takes place on a Wednesday. Visits run during the day across the week.
-- **Saturday group (S):** Dosing takes place on a Saturday. Visits 1 and 4 take place on weekday evenings.
-
-| Visit | W Group | S Group |
-|---|---|---|
-| **V1 Baseline (~3 hrs)** | Monday, daytime (09:00–17:00), ≥3 weeks before dosing | Tuesday, evening (16:00–20:00), ≥3 weeks before dosing |
-| **V2 Pre-dosing (~2 hrs)** | Tuesday, daytime (09:00–17:00), day before dosing | Friday, daytime (09:00–17:00), day before dosing |
-| **V3 Dosing Day (09:00–18:00)** | Wednesday | Saturday |
-| **V4 Follow-up (~3 hrs)** | Thursday, daytime (09:00–17:00), ~2 weeks after dosing | Monday, evening (16:00–20:00), ~2 weeks after dosing |
-
-All visits take place at **26 Bedford Way, London, WC1H 0AP**, except Dosing Day which is at **1-19 Torrington Place, WC1E 7HB**.
+- **Visit 1 (Baseline, approx. 3 hours):** Takes place on a **Tuesday**, at least three weeks before your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
+- **Visit 2 (Pre-dosing, approx. 2 hours):** Takes place on the **Friday** immediately before your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
+- **Visit 3 (Dosing Day, 10:00–18:00):** Your main all-day visit on a **Saturday**, at **1-19 Torrington Place, WC1E 7HB**. You will arrive at **10:00** and be collected at approximately **18:00**.
+- **Visit 4 (Follow-up, approx. 3 hours):** Takes place on a **Monday**, approximately two weeks after your Dosing Day, at **26 Bedford Way, London, WC1H 0AP**.
 """)
 st.divider()
 
@@ -317,66 +260,49 @@ with tab1:
     if name and participant_id and email:
         st.subheader("Step 2: Select Your Dosing Date")
         dosing_dates = booking_system.get_dosing_dates()
-
-        def format_dosing_date(d):
-            group = booking_system.get_group(d)
-            return f"{d.strftime('%A, %d %B %Y')} — {'W group (Wednesday)' if group == 'W' else 'S group (Saturday)'}"
-
         dosing_date = st.selectbox(
-            "Select an available Dosing Date (Visit 3):",
+            "Select an available **Saturday** Dosing Date (Visit 3):",
             dosing_dates,
-            format_func=format_dosing_date,
+            format_func=lambda x: x.strftime("%A, %B %d, %Y"),
             index=None,
             placeholder="Choose a date from the list"
         )
 
         if dosing_date:
-            group = booking_system.get_group(dosing_date)
             baseline_date = booking_system.get_baseline_date(dosing_date)
             pre_dosing_date = booking_system.get_pre_dosing_date(dosing_date)
             follow_up_date = booking_system.get_follow_up_date(dosing_date)
 
-            if group == 'W':
-                v1_label = "V1 Baseline (~3 hrs, Monday, daytime)"
-                v2_label = "V2 Pre-dosing (~2 hrs, Tuesday, daytime)"
-                v3_label = "V3 Dosing Day (09:00–18:00, Wednesday)"
-                v4_label = "V4 Follow-up (~3 hrs, Thursday, daytime)"
-            else:
-                v1_label = "V1 Baseline (~3 hrs, Tuesday, evening)"
-                v2_label = "V2 Pre-dosing (~2 hrs, Friday, daytime)"
-                v3_label = "V3 Dosing Day (09:00–18:00, Saturday)"
-                v4_label = "V4 Follow-up (~3 hrs, Monday, evening)"
-
             st.info(
-                f"**Your automatically generated visit dates ({group} group):**\n\n"
-                f"- **{v1_label}:** `{baseline_date.strftime('%A, %d %b %Y')}`\n\n"
-                f"- **{v2_label}:** `{pre_dosing_date.strftime('%A, %d %b %Y')}`\n\n"
-                f"- **{v3_label}:** `{dosing_date.strftime('%A, %d %b %Y')}`\n\n"
-                f"- **{v4_label}:** `{follow_up_date.strftime('%A, %d %b %Y')}`"
+                f"**Your automatically generated visit dates:**\n\n"
+                f"- **V1 (Baseline, approx. 3 hours):** `{baseline_date.strftime('%A, %d %b %Y')}`\n\n"
+                f"- **V2 (Pre-dosing, approx. 2 hours):** `{pre_dosing_date.strftime('%A, %d %b %Y')}`\n\n"
+                f"- **V3 (Dosing Day, 10:00–18:00):** `{dosing_date.strftime('%A, %d %b %Y')}`\n\n"
+                f"- **V4 (Follow-up, approx. 3 hours):** `{follow_up_date.strftime('%A, %d %b %Y')}`"
             )
 
             st.subheader("Step 3: Choose Start Times for Your Visits")
 
-            available_v1_times = booking_system.get_available_baseline_slots(baseline_date, group)
-            available_v2_times = booking_system.get_available_pre_dosing_slots(pre_dosing_date, group)
-            available_v4_times = booking_system.get_available_follow_up_slots(follow_up_date, group)
+            available_v1_times = booking_system.get_available_baseline_slots(baseline_date)
+            available_v2_times = booking_system.get_available_pre_dosing_slots(pre_dosing_date)
+            available_v4_times = booking_system.get_available_follow_up_slots(follow_up_date)
 
             any_unavailable = False
             if not available_v1_times:
-                st.error(f"No available slots for Visit 1 on {baseline_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
+                st.error(f"No available 3-hour slots for Visit 1 on {baseline_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
                 any_unavailable = True
             if not available_v2_times:
-                st.error(f"No available slots for Visit 2 on {pre_dosing_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
+                st.error(f"No available 2-hour slots for Visit 2 on {pre_dosing_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
                 any_unavailable = True
             if not available_v4_times:
-                st.error(f"No available slots for Visit 4 on {follow_up_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
+                st.error(f"No available 3-hour slots for Visit 4 on {follow_up_date.strftime('%A, %d %b')}. Please select a different Dosing Date.", icon="❌")
                 any_unavailable = True
 
             if not any_unavailable:
                 col1, col2, col3 = st.columns(3)
-                baseline_time = col1.selectbox(f"Visit 1 start time ({baseline_date.strftime('%a %d %b')}):", available_v1_times)
-                pre_dosing_time = col2.selectbox(f"Visit 2 start time ({pre_dosing_date.strftime('%a %d %b')}):", available_v2_times)
-                follow_up_time = col3.selectbox(f"Visit 4 start time ({follow_up_date.strftime('%a %d %b')}):", available_v4_times)
+                baseline_time = col1.selectbox("Visit 1 start time (Baseline, Tue):", available_v1_times)
+                pre_dosing_time = col2.selectbox("Visit 2 start time (Pre-dosing, Fri):", available_v2_times)
+                follow_up_time = col3.selectbox("Visit 4 start time (Follow-up, Mon):", available_v4_times)
 
                 st.divider()
                 if st.button("✅ **Confirm and Book All Appointments**", type="primary", use_container_width=True):
@@ -390,7 +316,7 @@ with tab1:
                             'pre_dosing_date': pre_dosing_date.strftime('%Y-%m-%d'),
                             'pre_dosing_time': pre_dosing_time,
                             'dosing_date': dosing_date.strftime('%Y-%m-%d'),
-                            'dosing_time': '09:00-18:00',
+                            'dosing_time': '10:00-18:00',
                             'follow_up_date': follow_up_date.strftime('%Y-%m-%d'),
                             'follow_up_time': follow_up_time,
                             'booking_status': 'Active',
@@ -426,6 +352,7 @@ with tab2:
 
         with admin_tab2:
             st.subheader("Cancel an Existing Booking")
+            # Refresh bookings from sheet before displaying
             active_bookings = booking_system.bookings[booking_system.bookings['booking_status'] == 'Active']
             if active_bookings.empty:
                 st.info("No active bookings found. If you expect to see bookings here, use the **Sheet Setup** tab to reset headers and try again.")
@@ -452,7 +379,7 @@ with tab2:
         with admin_tab3:
             st.subheader("Reset Sheet Headers")
             st.warning(
-                "Use this if the Google Sheet has old or mismatched headers. "
+                "Use this if the Google Sheet has old or mismatched headers (e.g. from a previous version of the app). "
                 "This will **clear the entire sheet** and write fresh headers. Only use this when there are no bookings to preserve.",
                 icon="⚠️"
             )
