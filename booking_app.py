@@ -231,9 +231,17 @@ class StudyBookingSystem:
             return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "16:00", "17:00")
 
     # --- BOOKING ---
-    def book_participant(self, details):
-        """Reloads fresh data immediately before writing to prevent double-booking."""
+        def book_participant(self, details):
+        # 1. Reload fresh data
         self._load_bookings_from_sheet()
+
+        # 2. Check dosing date isn't already taken  <-- ADD THIS
+        if not self.bookings.empty:
+            active_dosing_dates = self.bookings[
+                self.bookings['booking_status'] == 'Active'
+            ]['dosing_date'].values
+            if details['dosing_date'] in active_dosing_dates:
+                return False, f"The dosing date {details['dosing_date']} has just been taken. Please go back and select a different date."
 
         # Check for duplicate participant ID
         if not self.bookings.empty and details['participant_id'] in self.bookings[self.bookings['booking_status'] == 'Active']['participant_id'].values:
