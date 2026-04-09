@@ -231,7 +231,7 @@ class StudyBookingSystem:
             return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "16:00", "17:00")
 
     # --- BOOKING ---
-        def book_participant(self, details):
+    def book_participant(self, details):
         # 1. Reload fresh data
         self._load_bookings_from_sheet()
 
