@@ -21,6 +21,7 @@ COLUMNS = [
     'booking_status', 'notes', 'booking_time', 'cancellation_time'
 ]
 
+# New headers written for any fresh sheet
 SHEET_HEADERS = [
     'Name', 'Participant ID', 'Email',
     'V1 Date (Baseline)', 'V1 Start Time',
@@ -30,7 +31,19 @@ SHEET_HEADERS = [
     'Status', 'Notes', 'Booking Made', 'Cancellation Time'
 ]
 
+# Map new headers to internal keys
 HEADER_TO_KEY = dict(zip(SHEET_HEADERS, COLUMNS))
+
+# Also map old v6.1 headers so existing sheet data is read correctly
+OLD_SHEET_HEADERS = [
+    'Name', 'Participant ID', 'Email',
+    'V1 Date (Baseline - Tue)', 'V1 Start Time',
+    'V2 Date (Pre-dosing - Fri)', 'V2 Start Time',
+    'V3 Date (Dosing Day - Sat)', 'V3 Time',
+    'V4 Date (Follow-up - Mon)', 'V4 Start Time',
+    'Status', 'Notes', 'Booking Made', 'Cancellation Time'
+]
+HEADER_TO_KEY.update(dict(zip(OLD_SHEET_HEADERS, COLUMNS)))
 
 # Wednesday dosing dates for W group
 WEDNESDAY_DOSING_DATES = [
@@ -65,7 +78,7 @@ def get_credentials():
 def get_gsheet():
     """Returns a fresh sheet connection on every call. Never cached."""
     st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 7.2")
+    st.sidebar.caption("Version 7.3")
     try:
         creds = get_credentials()
         if creds is None:
@@ -99,6 +112,7 @@ class StudyBookingSystem:
             data = all_cells[1:]
             if not data:
                 return
+            # HEADER_TO_KEY handles both old and new header formats
             mapped_headers = [HEADER_TO_KEY.get(h, h) for h in raw_headers]
             df = pd.DataFrame(data, columns=mapped_headers)
             known_cols = [c for c in COLUMNS if c in df.columns]
@@ -124,7 +138,6 @@ class StudyBookingSystem:
     def get_dosing_dates(self):
         """Returns all available dosing dates: specific Wednesdays (W) + Saturdays May–Sep 2026 (S).
         Any date that already has an active booking is excluded."""
-        # Build Saturday list
         start_date = datetime(2026, 5, 2).date()
         end_date = datetime(2026, 9, 30).date()
         saturday_dates = []
@@ -135,7 +148,6 @@ class StudyBookingSystem:
 
         all_dates = sorted(WEDNESDAY_DOSING_DATES + saturday_dates)
 
-        # Get already-booked dosing dates
         booked_dates = set()
         if not self.bookings.empty:
             active = self.bookings[self.bookings['booking_status'] == 'Active']
@@ -149,10 +161,6 @@ class StudyBookingSystem:
 
     # --- DATE CALCULATIONS ---
     def get_baseline_date(self, dosing_date):
-        """
-        W group: most recent Monday at least 21 days before dosing Wednesday.
-        S group: most recent Tuesday at least 21 days before dosing Saturday.
-        """
         group = self.get_group(dosing_date)
         anchor = dosing_date - timedelta(days=21)
         target = 0 if group == 'W' else 1  # Monday=0, Tuesday=1
@@ -161,18 +169,9 @@ class StudyBookingSystem:
         return anchor
 
     def get_pre_dosing_date(self, dosing_date):
-        """
-        W group: Tuesday immediately before Wednesday.
-        S group: Friday immediately before Saturday.
-        In both cases this is simply dosing_date - 1 day.
-        """
         return dosing_date - timedelta(days=1)
 
     def get_follow_up_date(self, dosing_date):
-        """
-        W group: nearest Thursday on or after dosing + 14 days.
-        S group: nearest Monday on or after dosing + 14 days.
-        """
         group = self.get_group(dosing_date)
         anchor = dosing_date + timedelta(days=14)
         target = 3 if group == 'W' else 0  # Thursday=3, Monday=0
@@ -182,20 +181,16 @@ class StudyBookingSystem:
 
     # --- SLOT AVAILABILITY ---
     def _get_available_slots(self, visit_date, date_col, time_col, duration_hours, start_str, end_str):
-        """Returns list of available HH:MM start times for a given visit date and window.
-        Excludes any times that would overlap with an existing active booking."""
         slot_duration = timedelta(hours=duration_hours)
         start_time = datetime.strptime(start_str, "%H:%M")
         end_time = datetime.strptime(end_str, "%H:%M")
 
-        # Generate all potential 30-min slots within the window
         potential_slots = []
         current = start_time
         while current <= end_time:
             potential_slots.append(current)
             current += timedelta(minutes=30)
 
-        # Find already-booked intervals on this date
         booked_intervals = []
         if not self.bookings.empty:
             date_str = visit_date.strftime('%Y-%m-%d')
@@ -210,7 +205,6 @@ class StudyBookingSystem:
                 except (ValueError, TypeError):
                     continue
 
-        # Return slots that don't overlap any booked interval
         available = []
         for ps in potential_slots:
             pe = ps + slot_duration
@@ -219,24 +213,15 @@ class StudyBookingSystem:
         return available
 
     def get_available_baseline_slots(self, baseline_date, group):
-        """
-        W group (Monday): 09:00–14:00, 3hr session, finish by 17:00.
-        S group (Tuesday evening): 16:00–17:00, 3hr session, finish by 20:00.
-        """
         if group == 'W':
             return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "09:00", "14:00")
         else:
             return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "16:00", "17:00")
 
     def get_available_pre_dosing_slots(self, pre_dosing_date, group):
-        """Both groups: 09:00–15:00, 2hr session, finish by 17:00."""
         return self._get_available_slots(pre_dosing_date, 'pre_dosing_date', 'pre_dosing_time', 2, "09:00", "15:00")
 
     def get_available_follow_up_slots(self, follow_up_date, group):
-        """
-        W group (Thursday): 09:00–14:00, 3hr session, finish by 17:00.
-        S group (Monday evening): 16:00–17:00, 3hr session, finish by 20:00.
-        """
         if group == 'W':
             return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "09:00", "14:00")
         else:
@@ -244,30 +229,29 @@ class StudyBookingSystem:
 
     # --- BOOKING ---
     def book_participant(self, details):
-        # Step 1: Always reload fresh data from the sheet immediately before any checks.
-        # This means even if two people are on the page simultaneously, whoever clicks
-        # second will see the first person's booking and be blocked.
+        # Step 1: Reload fresh data immediately before any checks
         self._load_bookings_from_sheet()
 
-        # Step 2: Hard check — is this dosing date already taken?
-        # This is the primary guard against double-booking the same dosing day.
+        # Step 2: Hard block — is this exact dosing date already taken?
         if not self.bookings.empty:
             active_dosing_dates = set(
                 self.bookings[self.bookings['booking_status'] == 'Active']['dosing_date'].values
             )
             if details['dosing_date'] in active_dosing_dates:
                 return False, (
-                    f"The dosing date {details['dosing_date']} has already been booked by another participant. "
+                    f"The dosing date {details['dosing_date']} has already been booked. "
                     "Please go back and select a different date."
                 )
 
         # Step 3: Check for duplicate participant ID
         if not self.bookings.empty:
-            active_ids = set(self.bookings[self.bookings['booking_status'] == 'Active']['participant_id'].values)
+            active_ids = set(
+                self.bookings[self.bookings['booking_status'] == 'Active']['participant_id'].values
+            )
             if details['participant_id'] in active_ids:
                 return False, "This Participant ID already has an active booking."
 
-        # Step 4: Re-check that the chosen V1/V2/V4 time slots are still available
+        # Step 4: Re-check V1/V2/V4 slots are still available
         group = self.get_group(datetime.strptime(details['dosing_date'], '%Y-%m-%d').date())
         baseline_date = datetime.strptime(details['baseline_date'], '%Y-%m-%d').date()
         pre_dosing_date = datetime.strptime(details['pre_dosing_date'], '%Y-%m-%d').date()
@@ -315,7 +299,6 @@ class StudyBookingSystem:
 
 
 # --- 4. INITIALISE SYSTEM ---
-# Fresh connection + fresh data on every page load. No stale state possible.
 gsheet_connection = get_gsheet()
 if gsheet_connection:
     booking_system = StudyBookingSystem(gsheet_connection)
