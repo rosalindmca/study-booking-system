@@ -48,29 +48,17 @@ WEDNESDAY_DOSING_DATES = [
 
 
 # --- 2. GOOGLE SHEETS CONNECTION ---
-# Only the credentials object is cached (it never changes).
-# The sheet connection and all data are fetched fresh on every page load.
 @st.cache_resource
-def get_credentials():
+def get_gsheet():
+    st.sidebar.title("DIPP Booking System")
+    st.sidebar.caption("Version 7.0")
     try:
         if "google_sheets" not in st.secrets:
-            return None
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        return ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_sheets"], scope)
-    except Exception as e:
-        st.sidebar.error(f"Credentials error: {e}")
-        return None
-
-
-def get_gsheet():
-    """Creates a fresh sheet connection on every call — never cached."""
-    st.sidebar.title("DIPP Booking System")
-    st.sidebar.caption("Version 7.1")
-    try:
-        creds = get_credentials()
-        if creds is None:
             st.sidebar.error("Google Sheets credentials not found in secrets.")
             return None
+
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["google_sheets"], scope)
         client = gspread.authorize(creds)
         sheet_name = st.secrets.get("sheet_name", "DIPP_Bookings")
         sheet = client.open(sheet_name).sheet1
@@ -90,17 +78,20 @@ class StudyBookingSystem:
             self._load_bookings_from_sheet()
 
     def _load_bookings_from_sheet(self):
-        """Always reads fresh data directly from Google Sheets."""
         try:
             all_cells = self.sheet.get_all_values()
             if not all_cells or len(all_cells) < 1:
                 return
+
             raw_headers = all_cells[0]
             data = all_cells[1:]
+
             if not data:
                 return
+
             mapped_headers = [HEADER_TO_KEY.get(h, h) for h in raw_headers]
             df = pd.DataFrame(data, columns=mapped_headers)
+
             known_cols = [c for c in COLUMNS if c in df.columns]
             self.bookings = df[known_cols].reindex(columns=COLUMNS, fill_value="")
         except Exception as e:
@@ -122,7 +113,8 @@ class StudyBookingSystem:
 
     # --- DOSING DATES ---
     def get_dosing_dates(self):
-        """Specific Wednesdays (W group) + all Saturdays May–Sep 2026 (S group)."""
+        """Available dosing dates: specific Wednesdays (W group) + Saturdays May–Sep 2026 (S group)."""
+        # Saturday dates
         start_date = datetime(2026, 5, 2).date()
         end_date = datetime(2026, 9, 30).date()
         saturday_dates = []
@@ -133,6 +125,7 @@ class StudyBookingSystem:
 
         all_dates = sorted(WEDNESDAY_DOSING_DATES + saturday_dates)
 
+        # Remove already-booked dates
         booked_dates = []
         if not self.bookings.empty:
             active = self.bookings[self.bookings['booking_status'] == 'Active']
@@ -159,9 +152,8 @@ class StudyBookingSystem:
 
     def get_pre_dosing_date(self, dosing_date):
         """
-        W group: Tuesday immediately before Wednesday.
-        S group: Friday immediately before Saturday.
-        Both: dosing_date - 1 day.
+        W group: Tuesday immediately before dosing Wednesday.
+        S group: Friday immediately before dosing Saturday.
         """
         return dosing_date - timedelta(days=1)
 
@@ -179,6 +171,7 @@ class StudyBookingSystem:
 
     # --- SLOT AVAILABILITY ---
     def _get_available_slots(self, visit_date, date_col, time_col, duration_hours, start_str, end_str):
+        """Returns available start times, checking conflicts against existing active bookings."""
         slot_duration = timedelta(hours=duration_hours)
         start_time = datetime.strptime(start_str, "%H:%M")
         end_time = datetime.strptime(end_str, "%H:%M")
@@ -216,45 +209,36 @@ class StudyBookingSystem:
         return available_slots
 
     def get_available_baseline_slots(self, baseline_date, group):
+        """
+        W group: 09:00–14:00 (3hr session, daytime Monday).
+        S group: 16:00–17:00 (3hr session, evening Tuesday, latest start = 17:00 to finish by 20:00).
+        """
         if group == 'W':
             return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "09:00", "14:00")
         else:
             return self._get_available_slots(baseline_date, 'baseline_date', 'baseline_time', 3, "16:00", "17:00")
 
     def get_available_pre_dosing_slots(self, pre_dosing_date, group):
+        """
+        Both groups: 09:00–15:00 (2hr session).
+        W group: Tuesday. S group: Friday.
+        """
         return self._get_available_slots(pre_dosing_date, 'pre_dosing_date', 'pre_dosing_time', 2, "09:00", "15:00")
 
     def get_available_follow_up_slots(self, follow_up_date, group):
+        """
+        W group: 09:00–14:00 (3hr session, daytime Thursday).
+        S group: 16:00–17:00 (3hr session, evening Monday, latest start = 17:00 to finish by 20:00).
+        """
         if group == 'W':
             return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "09:00", "14:00")
         else:
             return self._get_available_slots(follow_up_date, 'follow_up_date', 'follow_up_time', 3, "16:00", "17:00")
 
-    # --- BOOKING ---
+    # --- BOOKING AND CANCELLATION ---
     def book_participant(self, details):
-        """Reloads fresh data immediately before writing to prevent double-booking."""
-        self._load_bookings_from_sheet()
-
-        # Check for duplicate participant ID
         if not self.bookings.empty and details['participant_id'] in self.bookings[self.bookings['booking_status'] == 'Active']['participant_id'].values:
             return False, "This Participant ID already has an active booking."
-
-        # Re-check slot availability with freshly loaded data
-        group = self.get_group(datetime.strptime(details['dosing_date'], '%Y-%m-%d').date())
-        baseline_date = datetime.strptime(details['baseline_date'], '%Y-%m-%d').date()
-        pre_dosing_date = datetime.strptime(details['pre_dosing_date'], '%Y-%m-%d').date()
-        follow_up_date = datetime.strptime(details['follow_up_date'], '%Y-%m-%d').date()
-
-        v1_available = self.get_available_baseline_slots(baseline_date, group)
-        v2_available = self.get_available_pre_dosing_slots(pre_dosing_date, group)
-        v4_available = self.get_available_follow_up_slots(follow_up_date, group)
-
-        if details['baseline_time'] not in v1_available:
-            return False, f"Visit 1 slot {details['baseline_time']} on {details['baseline_date']} has just been taken. Please go back and select another time."
-        if details['pre_dosing_time'] not in v2_available:
-            return False, f"Visit 2 slot {details['pre_dosing_time']} on {details['pre_dosing_date']} has just been taken. Please go back and select another time."
-        if details['follow_up_time'] not in v4_available:
-            return False, f"Visit 4 slot {details['follow_up_time']} on {details['follow_up_date']} has just been taken. Please go back and select another time."
 
         if self.sheet:
             row_to_save = [details.get(col, "") for col in COLUMNS]
@@ -264,7 +248,6 @@ class StudyBookingSystem:
         else:
             return False, "Booking failed: No connection to Google Sheets."
 
-    # --- CANCELLATION ---
     def cancel_booking(self, participant_id, reason):
         if not self.sheet:
             return False, "Cannot cancel: No connection to Google Sheets"
@@ -290,7 +273,6 @@ class StudyBookingSystem:
 
 
 # --- 4. INITIALISE SYSTEM ---
-# Fresh connection + fresh data read on every page load — no stale state possible
 gsheet_connection = get_gsheet()
 if gsheet_connection:
     booking_system = StudyBookingSystem(gsheet_connection)
@@ -306,7 +288,7 @@ st.markdown("""
 The DIPP study involves four visits. All dates are automatically calculated based on the **Dosing Day (Visit 3)** you select below.
 
 There are two dosing groups:
-- **Wednesday group (W):** Dosing takes place on a Wednesday. All visits run during the day.
+- **Wednesday group (W):** Dosing takes place on a Wednesday. Visits run during the day across the week.
 - **Saturday group (S):** Dosing takes place on a Saturday. Visits 1 and 4 take place on weekday evenings.
 
 | Visit | W Group | S Group |
@@ -338,7 +320,7 @@ with tab1:
 
         def format_dosing_date(d):
             group = booking_system.get_group(d)
-            return f"{d.strftime('%A, %d %B %Y')} — {'W group (Wednesday dosing)' if group == 'W' else 'S group (Saturday dosing)'}"
+            return f"{d.strftime('%A, %d %B %Y')} — {'W group (Wednesday)' if group == 'W' else 'S group (Saturday)'}"
 
         dosing_date = st.selectbox(
             "Select an available Dosing Date (Visit 3):",
@@ -438,6 +420,7 @@ with tab2:
         with admin_tab1:
             st.subheader("All Participant Bookings")
             if st.button("🔄 Refresh Data from Google Sheets"):
+                st.cache_resource.clear()
                 st.rerun()
             st.dataframe(booking_system.bookings, use_container_width=True)
 
@@ -480,6 +463,7 @@ with tab2:
                     success, message = booking_system.initialise_sheet_headers()
                     if success:
                         st.success(message)
+                        st.cache_resource.clear()
                         st.rerun()
                     else:
                         st.error(message)
